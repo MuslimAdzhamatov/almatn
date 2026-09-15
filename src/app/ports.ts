@@ -116,6 +116,11 @@ export interface FileStore {
   removeFile(path: string): Promise<void>;
   removeText(textId: number): Promise<void>;
   sha256(path: string): Promise<string>;
+  /**
+   * Удаляет мусор, оставшийся после падения процесса: загрузки в tmp/ и каталоги анализа work-*.
+   * Вызывается при старте, до приёма сообщений и возобновления разборов.
+   */
+  cleanupStale(): Promise<{ tmpFiles: number; workDirs: number }>;
 }
 
 /** poppler + sharp. Ошибки чтения PDF — PdfToolError (core/pdf/poppler). */

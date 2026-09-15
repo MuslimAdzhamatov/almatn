@@ -38,6 +38,12 @@ async function main(): Promise<void> {
     reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка обработки текста'),
   });
 
+  // До приёма сообщений: загрузок и разборов ещё нет, всё во tmp/ и work-* — остатки прошлого запуска.
+  const stale = await files.cleanupStale();
+  if (stale.tmpFiles > 0 || stale.workDirs > 0) {
+    logger.info(stale, 'Удалены временные файлы прошлого запуска');
+  }
+
   const bot = createBot(env.BOT_TOKEN, { users, onboarding, texts, files, logger });
   await bot.api.setMyCommands(BOT_COMMANDS);
   // Разборы PDF, прерванные перезапуском, продолжаются (статус хранится в БД).

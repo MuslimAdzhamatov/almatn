@@ -109,6 +109,7 @@ function setup() {
       removed.push(`text:${id}`);
     },
     sha256: async (path) => pdf.sha ?? `sha-of-${path}`,
+    cleanupStale: async () => ({ tmpFiles: 0, workDirs: 0 }),
   };
 
   const tools: PdfTools = {
