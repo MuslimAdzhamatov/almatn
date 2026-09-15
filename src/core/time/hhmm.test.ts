@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatHHmm, parseHHmm } from './hhmm.js';
+import { formatHHmm, fromMinutes, parseHHmm, requireHHmm, shiftHHmm } from './hhmm.js';
 
 describe('parseHHmm', () => {
   it.each([
@@ -17,6 +17,12 @@ describe('parseHHmm', () => {
   });
 });
 
+describe('requireHHmm', () => {
+  it('бросает ошибку на неверном формате', () => {
+    expect(() => requireHHmm('25:00')).toThrow('ЧЧ:ММ');
+  });
+});
+
 describe('formatHHmm', () => {
   it('добавляет ведущие нули', () => {
     expect(formatHHmm({ hour: 6, minute: 5 })).toBe('06:05');
@@ -24,5 +30,21 @@ describe('formatHHmm', () => {
 
   it('обратим с parseHHmm', () => {
     expect(formatHHmm(parseHHmm('9:30')!)).toBe('09:30');
+  });
+});
+
+describe('fromMinutes / shiftHHmm', () => {
+  it('заворачивает время по кругу суток', () => {
+    expect(fromMinutes(24 * 60 + 15)).toEqual({ hour: 0, minute: 15 });
+    expect(fromMinutes(-30)).toEqual({ hour: 23, minute: 30 });
+  });
+
+  it.each([
+    ['06:00', 720, '18:00'],
+    ['14:00', 720, '02:00'],
+    ['23:30', 720, '11:30'],
+    ['00:10', -20, '23:50'],
+  ])('%s сдвинутое на %i мин → %s', (time, minutes, expected) => {
+    expect(shiftHHmm(time, minutes)).toBe(expected);
   });
 });
