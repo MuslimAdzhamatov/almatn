@@ -149,7 +149,7 @@ export function createTexts({
     if (!text || text.status !== 'parsing') return;
     const workDir = await files.workDir(textId);
     try {
-      const parsed = await parsePdf(text.filePath, workDir, tools, mode);
+      const parsed = await parsePdf(text.filePath, workDir, tools, mode, files.removeFile);
       await store.replaceLines(textId, parsed.boxes);
       await store.update(textId, {
         status: 'awaiting_confirm',

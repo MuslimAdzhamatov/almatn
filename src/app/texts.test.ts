@@ -362,8 +362,8 @@ describe('загрузка и разбор', () => {
 
     pdf.pages = 0;
     expect(await upload()).toEqual({ kind: 'empty' });
-    pdf.pages = 301;
-    expect(await upload()).toEqual({ kind: 'too_many_pages', pages: 301, limit: 300 });
+    pdf.pages = 501;
+    expect(await upload()).toEqual({ kind: 'too_many_pages', pages: 501, limit: 500 });
 
     expect(texts.size).toBe(0);
     expect(removed).toEqual([

@@ -1,4 +1,5 @@
 import { limits } from '../config/limits.js';
+import { pageChunks } from '../core/pdf/chunks.js';
 import { layoutNumberedLines, type LineBox } from '../core/pdf/layout.js';
 import { pagesAsUnits } from '../core/pdf/manual.js';
 import { detectNumberedLines, estimatePitch, type NumberedLine } from '../core/pdf/numbers.js';
@@ -22,6 +23,8 @@ export async function parsePdf(
   workDir: string,
   tools: PdfTools,
   mode: ParseMode = 'auto',
+  /** Удаление отрендеренной для анализа страницы — после обработки её части. */
+  discard: (path: string) => Promise<void> = async () => undefined,
 ): Promise<ParsedPdf> {
   const pages = await tools.words(file);
   if (pages.length === 0) throw new PdfToolError('В PDF нет страниц', 'damaged');
@@ -41,32 +44,41 @@ export async function parsePdf(
     };
   }
 
-  const rendered = await tools.render(file, {
-    outDir: workDir,
-    dpi: limits.pdf.analysisDpi,
-    gray: true,
-    firstPage: numbered.firstPage,
-    lastPage: numbered.lastPage,
-  });
-
-  // Страницы анализируются по одной, чтобы не держать в памяти изображения всего документа.
+  // Страницы анализируются по одной, чтобы не держать в памяти изображения всего документа,
+  // а рендерятся частями — чтобы большие книги не упирались в таймаут pdftoppm и не занимали диск.
   const pitch = estimatePitch(numbered.lines);
   const byPage = new Map<number, NumberedLine[]>();
   for (const line of numbered.lines)
     byPage.set(line.page, [...(byPage.get(line.page) ?? []), line]);
 
   const boxes: LineBox[] = [];
-  for (const [page, lines] of byPage) {
-    const path = rendered.get(page);
-    const size = pages[page - 1];
-    if (!path || !size) throw new PdfToolError(`Страница ${page} не отрендерилась`, 'damaged');
-    const raster = {
-      page,
-      widthPt: size.width,
-      heightPt: size.height,
-      image: await tools.loadGray(path),
-    };
-    boxes.push(...layoutNumberedLines(lines, new Map([[page, raster]]), pitch));
+  const chunks = pageChunks(numbered.firstPage, numbered.lastPage, limits.pdf.renderChunkPages);
+  for (const [firstPage, lastPage] of chunks) {
+    const chunkPages = [...byPage.keys()].filter((page) => page >= firstPage && page <= lastPage);
+    if (chunkPages.length === 0) continue;
+    const rendered = await tools.render(file, {
+      outDir: workDir,
+      dpi: limits.pdf.analysisDpi,
+      gray: true,
+      firstPage,
+      lastPage,
+    });
+    try {
+      for (const page of chunkPages) {
+        const path = rendered.get(page);
+        const size = pages[page - 1];
+        if (!path || !size) throw new PdfToolError(`Страница ${page} не отрендерилась`, 'damaged');
+        const raster = {
+          page,
+          widthPt: size.width,
+          heightPt: size.height,
+          image: await tools.loadGray(path),
+        };
+        boxes.push(...layoutNumberedLines(byPage.get(page)!, new Map([[page, raster]]), pitch));
+      }
+    } finally {
+      for (const path of rendered.values()) await discard(path);
+    }
   }
 
   return {
