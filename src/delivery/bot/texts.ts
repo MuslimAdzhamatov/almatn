@@ -130,7 +130,118 @@ export const texts = {
     finishFirst: 'Сначала закончим настройку расписания.',
   },
 
+  upload: {
+    notPdf: 'Пришлите, пожалуйста, текст в формате PDF — файлом (как документ).',
+    tooBig: (limitMb: number) =>
+      `Файл больше ${limitMb} МБ — Telegram не даёт ботам скачивать такие файлы. Сожмите PDF или разделите его на части.`,
+    tooManyTexts: (limit: number) =>
+      `У вас уже ${limit} текстов — это максимум. Удалите ненужный текст, чтобы загрузить новый.`,
+    downloading: 'Получаю файл…',
+    downloadFailed: 'Не удалось скачать файл из Telegram. Попробуйте отправить его ещё раз.',
+    accepted: (queued: number) =>
+      queued > 1
+        ? `Файл получен ✅ Разберу его, как только освобожусь (перед вами в очереди: ${queued - 1}).`
+        : 'Файл получен ✅ Разбираю — обычно это занимает до минуты.',
+    duplicate: (title: string) => `Этот файл уже загружен — текст «${title}».`,
+    password: 'PDF защищён паролем. Сохраните его без пароля и пришлите снова.',
+    damaged: 'Не получается прочитать этот PDF: похоже, файл повреждён.',
+    empty: 'В этом PDF нет ни одной страницы.',
+    tooManyPages: (pages: number, limit: number) =>
+      `В PDF ${pages} страниц, а бот принимает до ${limit}. Пришлите только нужную часть текста.`,
+    parseFailed: (fileName: string) =>
+      `Не удалось разобрать «${fileName}». Попробуйте другой файл.`,
+
+    summaryTitle: (title: string, fileName: string) => `📄 «${title}» — ${fileName}`,
+    found: (count: string, firstPage: number, lastPage: number, pageCount: number) =>
+      `Найдено: ${count} на страницах ${firstPage}–${lastPage} (всего страниц в файле: ${pageCount}).`,
+    byNumbers: 'Способ разбора: по номерам строк.',
+    byPages: (count: string) => `Способ разбора: постранично — ${count}.`,
+    noNumbersFallback: (count: string) =>
+      `Номера строк в этом PDF не найдены, поэтому пока единица заучивания — страница целиком (${count}). Разбор по строкам для текстов без номеров и сканов появится в следующем обновлении.`,
+    anomaliesTitle: 'Исправления нумерации:',
+    anomaly: (anomaly: NumberingAnomaly) => {
+      switch (anomaly.kind) {
+        case 'misprint':
+          return `стр. ${anomaly.page}: номер напечатан как ${anomaly.printed}, по порядку это ${anomaly.lineNumber}`;
+        case 'missing_number':
+          return `стр. ${anomaly.page}: у строки ${anomaly.lineNumber} не найден номер — строка определена по положению`;
+        case 'skipped_number':
+          return `стр. ${anomaly.page}: после строки ${anomaly.afterLine} в нумерации пропущено ${anomaly.skipped.join(', ')} — строки пронумерованы по порядку`;
+      }
+    },
+    moreAnomalies: (count: number) => `…и ещё ${count}`,
+    previewLines:
+      'Ниже — первые строки так, как их будет присылать бот. Проверьте, что строки вырезаны правильно.',
+    previewPage: 'Ниже — первая страница так, как её будет присылать бот.',
+    confirmPrompt: 'Всё разобрано верно?',
+
+    buttons: {
+      confirm: '✅ Всё верно',
+      callAs: (unit: UnitName) => (unit === 'bayts' ? 'Называть «бейты»' : 'Называть «строки»'),
+      byPages: '📄 Разобрать постранично',
+      byNumbers: '🔢 Разобрать по номерам строк',
+      cancel: 'Отмена',
+      keepTitle: (title: string) => `Оставить «${shorten(title, 32)}»`,
+    },
+    unitChanged: (unit: UnitName) => (unit === 'bayts' ? 'Теперь — «бейты»' : 'Теперь — «строки»'),
+    askTitle: (title: string) => `Как назвать текст? Напишите название или оставьте «${title}».`,
+    invalidTitle: (maxLength: number) =>
+      `Название должно быть от 1 до ${maxLength} символов. Напишите другое.`,
+    saved: (title: string, count: string) =>
+      `Текст «${title}» сохранён: ${count} ✅\n\nСоздание плана заучивания появится в ближайшем обновлении.`,
+    reparsing: 'Разбираю заново…',
+    cancelled: 'Загрузка отменена, файл удалён.',
+    stale: 'Эта кнопка уже неактуальна',
+    staleTitle: 'Этот текст уже сохранён или удалён.',
+  },
+
   notReadyYet: 'Эта функция появится на следующих этапах разработки.',
   unknownMessage: 'Не понял сообщение. Список команд — в меню бота.',
   unexpectedError: 'Что-то пошло не так. Попробуйте ещё раз чуть позже.',
 } as const;
+
+type NumberingAnomaly = import('../../core/pdf/numbers.js').NumberingAnomaly;
+type ParseStrategy = import('../../app/ports.js').ParseStrategy;
+type UnitName = import('../../app/ports.js').UnitName;
+
+const NOUNS = {
+  lines: ['строка', 'строки', 'строк'],
+  bayts: ['бейт', 'бейта', 'бейтов'],
+  pages: ['страница', 'страницы', 'страниц'],
+} as const;
+const RANGE_LABELS = { lines: 'Строки', bayts: 'Бейты', pages: 'Страницы' } as const;
+const SINGLE_LABELS = { lines: 'Строка', bayts: 'Бейт', pages: 'Страница' } as const;
+
+/** Постраничный разбор — единица «страница», иначе — как выбрал пользователь. */
+const unitKind = (strategy: ParseStrategy, unitName: UnitName) =>
+  strategy === 'manual_page' ? 'pages' : unitName;
+
+export function pluralRu(n: number, [one, few, many]: readonly [string, string, string]): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+/** «448 бейтов», «1 страница». */
+export function unitCount(n: number, strategy: ParseStrategy, unitName: UnitName): string {
+  return `${n} ${pluralRu(n, NOUNS[unitKind(strategy, unitName)])}`;
+}
+
+/** Подпись к картинке: «Бейты 41–45», «Страница 3». */
+export function unitRangeLabel(
+  start: number,
+  end: number,
+  strategy: ParseStrategy,
+  unitName: UnitName,
+): string {
+  const kind = unitKind(strategy, unitName);
+  return start === end
+    ? `${SINGLE_LABELS[kind]} ${start}`
+    : `${RANGE_LABELS[kind]} ${start}–${end}`;
+}
+
+function shorten(text: string, maxLength: number): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}

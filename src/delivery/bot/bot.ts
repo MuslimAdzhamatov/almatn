@@ -3,15 +3,20 @@ import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { Bot, GrammyError, HttpError } from 'grammy';
 import type { BotCommand } from 'grammy/types';
 import type { Onboarding } from '../../app/onboarding.js';
+import type { FileStore } from '../../app/ports.js';
+import type { Texts } from '../../app/texts.js';
 import type { UsersRepository } from '../../db/repositories/users.js';
 import type { Logger } from '../../lib/logger.js';
 import type { BotContext } from './context.js';
 import { registerOnboarding } from './handlers/onboarding.js';
+import { registerTexts } from './handlers/texts.js';
 import { texts } from './texts.js';
 
 export interface BotDeps {
   users: UsersRepository;
   onboarding: Onboarding;
+  texts: Texts;
+  files: FileStore;
   logger: Logger;
 }
 
@@ -37,6 +42,7 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
   });
 
   registerOnboarding(bot, deps.onboarding);
+  registerTexts(bot, { texts: deps.texts, files: deps.files, token, logger: deps.logger });
 
   bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);
