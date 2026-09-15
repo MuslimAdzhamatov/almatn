@@ -47,6 +47,9 @@ export interface DetectOptions {
 
 const DEFAULTS: DetectOptions = { minLines: 5, columnTolerance: 20, maxGap: 3 };
 
+/** Сколько следующих номеров просматривать, чтобы признать номер лишним (страница, сноска). */
+const NOISE_LOOKAHEAD = 3;
+
 const BRACKETS = '()\\[\\]{}﴾﴿«»<>';
 const MARKS = '.\\-–—ـ:';
 const NUMBER_TOKEN = new RegExp(
@@ -108,19 +111,45 @@ function boxOf({ xMin, yMin, xMax, yMax }: PdfWord) {
   return { xMin, yMin, xMax, yMax };
 }
 
-/** Группирует номера по колонкам: центры по горизонтали ближе columnTolerance — одна колонка. */
+/** По какой точке номера выравнивается колонка: по центру, левому или правому краю. */
+export type ColumnAnchor = 'center' | 'left' | 'right';
+
+const ANCHORS: readonly ColumnAnchor[] = ['center', 'right', 'left'];
+
+function anchorX(token: NumberToken, anchor: ColumnAnchor): number {
+  if (anchor === 'left') return token.xMin;
+  if (anchor === 'right') return token.xMax;
+  return (token.xMin + token.xMax) / 2;
+}
+
+/**
+ * Группирует номера по колонкам: жадно берём окно шириной tolerance (по точке выравнивания)
+ * с наибольшим числом номеров, затем повторяем для оставшихся. В отличие от «цепочки соседей»,
+ * колонка не расползается на всю ширину страницы через номера сносок и страниц.
+ * Номера, выровненные по правому краю (١ и ١٠٠ сдвинуты по центру), группируются по anchor = 'right'.
+ */
 export function clusterByColumn(
   tokens: readonly NumberToken[],
   tolerance: number,
+  minSize = 1,
+  anchor: ColumnAnchor = 'center',
 ): NumberToken[][] {
-  const center = (t: NumberToken) => (t.xMin + t.xMax) / 2;
-  const sorted = [...tokens].sort((a, b) => center(a) - center(b));
+  const remaining = tokens
+    .map((token) => ({ token, center: anchorX(token, anchor) }))
+    .sort((a, b) => a.center - b.center);
   const clusters: NumberToken[][] = [];
-  for (const token of sorted) {
-    const cluster = clusters.at(-1);
-    const previous = cluster?.at(-1);
-    if (cluster && previous && center(token) - center(previous) <= tolerance) cluster.push(token);
-    else clusters.push([token]);
+  while (remaining.length > 0) {
+    let bestStart = 0;
+    let bestEnd = 0;
+    for (let start = 0, end = 0; end < remaining.length; end++) {
+      while (remaining[end]!.center - remaining[start]!.center > tolerance) start++;
+      if (end - start > bestEnd - bestStart) {
+        bestStart = start;
+        bestEnd = end;
+      }
+    }
+    if (bestEnd - bestStart + 1 < minSize) break;
+    clusters.push(remaining.splice(bestStart, bestEnd - bestStart + 1).map((item) => item.token));
   }
   return clusters;
 }
@@ -206,6 +235,19 @@ export function splitIntoRuns(
     if (delta === 1) {
       addLine(token, token.value);
       lastValue = token.value;
+    } else if (
+      ordered.slice(i + 1, i + 1 + NOISE_LOOKAHEAD).some((t) => t.value === lastValue + 1)
+    ) {
+      const farFromPrevious =
+        token.page !== prevToken.page || token.yMin - prevToken.yMin > 2 * pitch;
+      if (token.value === lastValue && farFromPrevious) {
+        // Тот же номер, но продолжение идёт сразу за этим: лишним был предыдущий (сноска «١» до начала текста).
+        lines.pop();
+        addLine(token, token.value);
+        lastToken = token;
+      }
+      // Иначе лишний — этот номер (номер страницы, сноска): пропускаем, не прерывая последовательность.
+      continue;
     } else if (next && next.value === lastValue + 2) {
       // Одиночная опечатка: соседи согласованы, а этот номер напечатан неверно (276 вместо 286).
       const line = addLine(token, token.value);
@@ -258,13 +300,14 @@ export function detectNumberedLines(
   const tokens = pages.flatMap(findNumberTokens);
 
   let best: NumberedParse | null = null;
-  for (const column of clusterByColumn(tokens, opts.columnTolerance)) {
-    if (column.length < opts.minLines) continue;
-    const ordered = [...column].sort(byReadingOrder);
-    const pitch = estimatePitch(ordered);
-    for (const run of splitIntoRuns(ordered, pitch, opts.maxGap)) {
-      if (run.lines.length >= opts.minLines && run.lines.length > (best?.lines.length ?? 0)) {
-        best = run;
+  for (const anchor of ANCHORS) {
+    for (const column of clusterByColumn(tokens, opts.columnTolerance, opts.minLines, anchor)) {
+      const ordered = [...column].sort(byReadingOrder);
+      const pitch = estimatePitch(ordered);
+      for (const run of splitIntoRuns(ordered, pitch, opts.maxGap)) {
+        if (run.lines.length >= opts.minLines && run.lines.length > (best?.lines.length ?? 0)) {
+          best = run;
+        }
       }
     }
   }

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { PdfPageWords, PdfWord } from './bbox.js';
 import {
+  clusterByColumn,
   detectNumberedLines,
   estimatePitch,
   mergeNumberFragments,
   normalizeDigits,
   parseNumberToken,
+  type NumberToken,
 } from './numbers.js';
 
 const ARABIC = '٠١٢٣٤٥٦٧٨٩';
@@ -78,6 +80,21 @@ describe('номера строк', () => {
     }));
     expect(estimatePitch(lines)).toBe(30);
   });
+
+  it('колонка — окно наибольшей плотности, соседние номера не сцепляются в одну колонку', () => {
+    const token = (center: number): NumberToken => ({
+      page: 1,
+      value: 1,
+      decorated: false,
+      xMin: center - 5,
+      xMax: center + 5,
+      yMin: 0,
+      yMax: 10,
+    });
+    const clusters = clusterByColumn([533, 535, 531, 515, 497, 479, 481].map(token), 20);
+    expect(clusters.map((cluster) => cluster.length)).toEqual([4, 3]);
+    expect(clusterByColumn([533, 535, 531, 497].map(token), 20, 2)).toHaveLength(1);
+  });
 });
 
 describe('detectNumberedLines', () => {
@@ -132,6 +149,29 @@ describe('detectNumberedLines', () => {
     ]);
     expect(result).toMatchObject({ firstPage: 8, lastPage: 9 });
     expect(result?.lines).toHaveLength(20);
+  });
+
+  it('пропускает номер страницы, попавший в колонку номеров строк', () => {
+    const withPageNumberInColumn = (pageNo: number, numbers: number[]): PdfPageWords => {
+      const result = page(pageNo, numbers, { bare: true });
+      result.words.push(word(toArabic(pageNo), 523, 815));
+      return result;
+    };
+    const result = detectNumberedLines([
+      withPageNumberInColumn(7, range(1, 12)),
+      withPageNumberInColumn(8, range(13, 24)),
+    ]);
+    expect(result?.lines.map((l) => l.printedNumber)).toEqual(range(1, 24));
+    expect(result?.anomalies).toEqual([]);
+  });
+
+  it('сноска с тем же номером до начала текста не сдвигает начало последовательности', () => {
+    const intro = page(5, [], { bare: true });
+    intro.words.push(word(toArabic(1), 523, 552)); // сноска «١» внизу страницы предисловия
+    const result = detectNumberedLines([intro, page(8, range(1, 12), { bare: true })]);
+    expect(result).toMatchObject({ firstPage: 8, lastPage: 8, anomalies: [] });
+    expect(result?.lines[0]).toMatchObject({ lineNumber: 1, printedNumber: 1, page: 8, yMin: 30 });
+    expect(result?.lines).toHaveLength(12);
   });
 
   it('слишком мало номеров — не считает результат правдоподобным', () => {

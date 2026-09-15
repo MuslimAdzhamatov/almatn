@@ -164,16 +164,18 @@ function layoutPage(lines: NumberedLine[], raster: PageRaster, pitch: number): L
       return;
     }
     const gap = line.yMin - prev.yMax;
-    if (gap <= 0.6 * pitch) {
+    const bottom = gap > 0.6 * pitch ? expandDown(prev) : 0;
+    const top = gap > 0.6 * pitch ? expandUp(line) : 0;
+    if (gap <= 0.6 * pitch || top < bottom) {
+      // Обычный промежуток (или окна расширения пересеклись) — делим посередине пустой полосы.
       const boundary = splitBetween(prev, line);
       bottoms[i - 1] = boundary;
       tops[i] = boundary;
-      breaks[i] = false;
     } else {
-      bottoms[i - 1] = expandDown(prev);
-      tops[i] = expandUp(line);
-      breaks[i] = gap > 1.5 * pitch;
+      bottoms[i - 1] = bottom;
+      tops[i] = top;
     }
+    breaks[i] = gap > 1.5 * pitch;
   });
   bottoms[lines.length - 1] = expandDown(lines.at(-1)!);
 
