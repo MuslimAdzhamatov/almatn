@@ -19,7 +19,14 @@ Telegram-бот для заучивания текстов из любого PDF
 - poppler — `pdftotext`, `pdftoppm` (`brew install poppler`)
 - `.env` по образцу `.env.example` (токен **тестового** бота и строка подключения к БД)
 
-Команды запуска появятся после этапа 1.
+```bash
+npm install                 # зависимости + генерация Prisma Client
+cp .env.example .env        # заполнить BOT_TOKEN и DATABASE_URL
+npm run db:migrate          # создать БД (если нет) и применить миграции
+npm run dev                 # запустить бота (long polling, перезапуск при изменениях)
+```
+
+Прочие команды: `npm test` (юнит-тесты), `npm run typecheck`, `npm run lint`, `npm run format`, `npm run build && npm start` (сборка и запуск из `dist/`), `npm run db:studio` (просмотр БД).
 
 ## Деплой
 
