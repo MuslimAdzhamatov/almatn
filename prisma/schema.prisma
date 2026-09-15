@@ -1,0 +1,277 @@
+// Модель данных almatn. Подробности и обоснования — CLAUDE.md, раздел 4.
+// Время хранится в UTC; календарные даты плана — @db.Date (локальная дата пользователя).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum NightPolicy {
+  keep // присылать по часам как есть
+  move // переносить ночные сообщения на nightEnd
+}
+
+enum UnitName {
+  lines // «строки»
+  bayts // «бейты»
+}
+
+enum ParseStrategy {
+  numbers
+  text_lines
+  image_lines
+  manual_page
+  manual_split
+}
+
+enum TextStatus {
+  parsing
+  awaiting_confirm
+  ready
+  failed
+}
+
+enum PaceMode {
+  deadline
+  per_day
+}
+
+enum PlanStatus {
+  active
+  learning_done
+  completed
+  cancelled
+}
+
+enum PortionStatus {
+  sent
+  learned
+  completed
+}
+
+enum ReviewStage {
+  learn_reminder
+  rep_12h
+  rep_1d
+  rep_3d
+  rep_2w
+  rep_1m
+}
+
+enum ReviewStatus {
+  pending
+  sent
+  confirmed
+  missed
+  cancelled
+}
+
+enum DeliveryKind {
+  portion
+  review_batch
+  debt_reminder
+  learn_reminder
+  pause_ending
+  autopause
+}
+
+enum DeliveryStatus {
+  sending
+  sent
+  confirmed
+  missed
+  failed
+}
+
+model User {
+  id                    BigInt      @id // telegram user id
+  username              String?
+  timezone              String? // IANA; null до завершения онбординга
+  dailySendTime         String? // "HH:mm" — основной слот
+  nightStart            String      @default("23:00")
+  nightEnd              String      @default("07:00")
+  nightPolicy           NightPolicy @default(keep)
+  eveningReminderTime   String      @default("21:00")
+  learnReminderDelayMin Int         @default(120)
+  onboardedAt           DateTime?
+  pausedFrom            DateTime?
+  pausedUntil           DateTime? // null при pausedFrom != null — пауза до ручного продолжения
+  lastActivityAt        DateTime? // последнее нажатие/команда — для автопаузы
+  blockedAt             DateTime? // пользователь заблокировал бота (403)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  dialog     DialogState?
+  texts      Text[]
+  plans      Plan[]
+  deliveries Delivery[]
+
+  @@map("users")
+}
+
+model DialogState {
+  userId    BigInt   @id
+  flow      String // onboarding | upload | plan_create | settings | pause
+  step      String
+  data      Json     @default("{}")
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("dialog_states")
+}
+
+model Text {
+  id               Int            @id @default(autoincrement())
+  userId           BigInt
+  title            String
+  unitName         UnitName       @default(lines)
+  originalFileName String
+  filePath         String
+  fileSize         Int
+  sha256           String
+  pageCount        Int
+  totalLines       Int            @default(0)
+  parseStrategy    ParseStrategy?
+  status           TextStatus     @default(parsing)
+  parseReport      Json? // аномалии нумерации и т.п. — для сводки
+  parseError       String?
+  createdAt        DateTime       @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lines      Line[]
+  plans      Plan[]
+  cropCache  CropCache[]
+  deliveries Delivery[]
+
+  @@unique([userId, sha256])
+  @@index([userId])
+  @@map("texts")
+}
+
+model Line {
+  id                 Int     @id @default(autoincrement())
+  textId             Int
+  lineNumber         Int // итоговый номер по порядку
+  printedNumber      Int? // как напечатано в PDF
+  page               Int // с 1
+  yTop               Float // границы вырезки, пункты PDF
+  yBottom            Float
+  xLeft              Float? // null — ширина текстового блока страницы
+  xRight             Float?
+  sectionBreakBefore Boolean @default(false)
+
+  text Text @relation(fields: [textId], references: [id], onDelete: Cascade)
+
+  @@unique([textId, lineNumber])
+  @@map("lines")
+}
+
+model CropCache {
+  id             Int      @id @default(autoincrement())
+  textId         Int
+  cropKey        String // page:yTop:yBottom:width
+  telegramFileId String
+  createdAt      DateTime @default(now())
+
+  text Text @relation(fields: [textId], references: [id], onDelete: Cascade)
+
+  @@unique([textId, cropKey])
+  @@map("crop_cache")
+}
+
+// Не больше одного открытого плана (active | learning_done) на текст —
+// частичный уникальный индекс plans_one_open_per_text в отдельной SQL-миграции.
+model Plan {
+  id               Int        @id @default(autoincrement())
+  textId           Int
+  userId           BigInt
+  lineFrom         Int
+  lineTo           Int
+  unitsPerDay      Int
+  paceMode         PaceMode
+  startDate        DateTime   @db.Date
+  deadlineDate     DateTime?  @db.Date
+  deadlineInput    String? // days:N | months:N | date:YYYY-MM-DD
+  restDays         Int[] // 0–2 значения, 1 = пн … 7 = вс
+  status           PlanStatus @default(active)
+  nextLine         Int // первая строка следующей порции
+  estimatedEndDate DateTime?  @db.Date
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  text     Text      @relation(fields: [textId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  portions Portion[]
+
+  @@index([userId, status])
+  @@map("plans")
+}
+
+model Portion {
+  id          Int           @id @default(autoincrement())
+  planId      Int
+  seq         Int // 1, 2, 3 … в плане
+  lineStart   Int
+  lineEnd     Int
+  status      PortionStatus @default(sent)
+  sentAt      DateTime
+  learnedAt   DateTime?
+  anchorAt    DateTime? // слот, к которому округлено «Выучил»
+  completedAt DateTime?
+
+  plan       Plan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+  reviews    Review[]
+  deliveries Delivery[]
+
+  @@unique([planId, seq])
+  @@index([planId, status])
+  @@map("portions")
+}
+
+model Review {
+  id          Int          @id @default(autoincrement())
+  portionId   Int
+  stage       ReviewStage
+  dueAt       DateTime // логический слот; тихие часы применяются при отправке
+  status      ReviewStatus @default(pending)
+  sentAt      DateTime?
+  confirmedAt DateTime?
+  deliveryId  Int? // последняя отправка с этим повтором
+
+  portion  Portion   @relation(fields: [portionId], references: [id], onDelete: Cascade)
+  delivery Delivery? @relation(fields: [deliveryId], references: [id], onDelete: SetNull)
+
+  @@unique([portionId, stage])
+  @@index([status, dueAt])
+  @@map("reviews")
+}
+
+model Delivery {
+  id               Int            @id @default(autoincrement())
+  userId           BigInt
+  textId           Int?
+  portionId        Int? // для kind = portion | learn_reminder
+  kind             DeliveryKind
+  slotAt           DateTime
+  dedupeKey        String         @unique // защита от повторной отправки того же слота
+  status           DeliveryStatus @default(sending) // запись создаётся до отправки
+  sentAt           DateTime?
+  answeredAt       DateTime?
+  messageIds       Int[] // все сообщения: альбомы + сообщение с кнопками
+  buttonsMessageId Int? // для editMessageReplyMarkup
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text    Text?    @relation(fields: [textId], references: [id], onDelete: Cascade)
+  portion Portion? @relation(fields: [portionId], references: [id], onDelete: Cascade)
+  reviews Review[]
+
+  @@index([userId, kind, slotAt])
+  @@map("deliveries")
+}
