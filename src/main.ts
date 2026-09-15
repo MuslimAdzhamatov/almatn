@@ -1,5 +1,7 @@
+import { createOnboarding } from './app/onboarding.js';
 import { env } from './config/env.js';
 import { createDb } from './db/client.js';
+import { createDialogsRepository } from './db/repositories/dialogs.js';
 import { createUsersRepository } from './db/repositories/users.js';
 import { BOT_COMMANDS, createBot } from './delivery/bot/bot.js';
 import { logger } from './lib/logger.js';
@@ -8,7 +10,10 @@ async function main(): Promise<void> {
   const db = createDb(env.DATABASE_URL);
   await db.$connect();
 
-  const bot = createBot(env.BOT_TOKEN, { users: createUsersRepository(db), logger });
+  const users = createUsersRepository(db);
+  const onboarding = createOnboarding({ users, dialogs: createDialogsRepository(db) });
+
+  const bot = createBot(env.BOT_TOKEN, { users, onboarding, logger });
   await bot.api.setMyCommands(BOT_COMMANDS);
 
   let stopping = false;

@@ -1,3 +1,4 @@
+import type { UserSettings, UserSettingsPatch, UserSettingsStore } from '../../app/ports.js';
 import type { Db } from '../client.js';
 
 export interface TelegramUserInput {
@@ -6,7 +7,30 @@ export interface TelegramUserInput {
 }
 
 export function createUsersRepository(db: Db) {
+  const settings: UserSettingsStore = {
+    async getSettings(userId: bigint): Promise<UserSettings | null> {
+      return db.user.findUnique({
+        where: { id: userId },
+        select: {
+          timezone: true,
+          dailySendTime: true,
+          nightStart: true,
+          nightEnd: true,
+          nightPolicy: true,
+          eveningReminderTime: true,
+          onboardedAt: true,
+        },
+      });
+    },
+
+    async updateSettings(userId: bigint, patch: UserSettingsPatch): Promise<void> {
+      await db.user.update({ where: { id: userId }, data: patch });
+    },
+  };
+
   return {
+    ...settings,
+
     /** Создаёт пользователя при первом обращении, обновляет username и время активности. */
     async touch(input: TelegramUserInput, now: Date) {
       const id = BigInt(input.id);
