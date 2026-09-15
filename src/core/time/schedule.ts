@@ -52,9 +52,13 @@ export function scheduleEntry(time: string, night: NightSettings): ScheduleEntry
   return { planned, atNight, actual };
 }
 
-/** Суточное расписание пользователя (раздел 5.4, шаг 3) — для показа при настройке. */
+/**
+ * Суточное расписание пользователя (раздел 5.4, шаг 3) — для показа при настройке.
+ * Основной слот пользователь выбрал сам, поэтому тихие часы к нему не применяются (раздел 5.1).
+ */
 export function buildDailySchedule(settings: ScheduleSettings): DailySchedule {
-  const newPortion = scheduleEntry(settings.dailySendTime, settings);
+  const mainSlot = formatHHmm(requireHHmm(settings.dailySendTime));
+  const newPortion: ScheduleEntry = { planned: mainSlot, atNight: false, actual: mainSlot };
   const secondSlot = scheduleEntry(shiftHHmm(settings.dailySendTime, 12 * 60), settings);
   const eveningReminder = scheduleEntry(settings.eveningReminderTime, settings);
   return {

@@ -46,11 +46,11 @@ describe('buildDailySchedule', () => {
     expect(schedule.hasNightEntries).toBe(false);
   });
 
-  it('06:00 при тихих часах 23:00–07:00 считается ночью', () => {
-    const schedule = buildDailySchedule({ ...base, dailySendTime: '06:00' });
-    expect(schedule.newPortion).toEqual({ planned: '06:00', atNight: true, actual: '06:00' });
-    expect(schedule.secondSlot.atNight).toBe(false);
-    expect(schedule.hasNightEntries).toBe(true);
+  it('основной слот не считается ночным — это время выбрал сам пользователь', () => {
+    const schedule = buildDailySchedule({ ...base, dailySendTime: '06:00', nightPolicy: 'move' });
+    expect(schedule.newPortion).toEqual({ planned: '06:00', atNight: false, actual: '06:00' });
+    expect(schedule.secondSlot).toEqual({ planned: '18:00', atNight: false, actual: '18:00' });
+    expect(schedule.hasNightEntries).toBe(false);
   });
 
   it('keep: повтор через 12 часов остаётся ночью', () => {
@@ -65,15 +65,16 @@ describe('buildDailySchedule', () => {
     expect(schedule.newPortion.actual).toBe('14:00');
   });
 
-  it('move: ночной основной слот переносится, второй слот днём', () => {
+  it('move: основной слот в тихие часы не переносится', () => {
     const schedule = buildDailySchedule({
       ...base,
       dailySendTime: '23:30',
       nightEnd: '08:00',
       nightPolicy: 'move',
     });
-    expect(schedule.newPortion).toEqual({ planned: '23:30', atNight: true, actual: '08:00' });
+    expect(schedule.newPortion).toEqual({ planned: '23:30', atNight: false, actual: '23:30' });
     expect(schedule.secondSlot).toEqual({ planned: '11:30', atNight: false, actual: '11:30' });
+    expect(schedule.hasNightEntries).toBe(false);
   });
 
   it('вечернее напоминание в тихие часы тоже учитывается', () => {

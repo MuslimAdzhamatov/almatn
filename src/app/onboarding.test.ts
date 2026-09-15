@@ -91,6 +91,21 @@ describe('онбординг', () => {
     expect(settings.dailySendTime).toBeNull();
   });
 
+  it('раннее время порции (06:00) не вызывает вопрос про ночь', async () => {
+    const { onboarding, settings, reachSendTime } = setup();
+    await reachSendTime();
+    const done = await onboarding.handleText(USER, '06:00', NOW);
+    expect(done).toMatchObject({
+      kind: 'done',
+      schedule: { newPortion: { planned: '06:00', atNight: false, actual: '06:00' } },
+    });
+    expect(settings).toMatchObject({
+      dailySendTime: '06:00',
+      nightPolicy: 'keep',
+      onboardedAt: NOW,
+    });
+  });
+
   it('ночной повтор: «переносить на утро»', async () => {
     const { onboarding, settings, reachSendTime } = setup();
     await reachSendTime();
