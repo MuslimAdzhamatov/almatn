@@ -7,3 +7,5 @@ build/
 .DS_Store
 prisma/dev.db
 coverage/
+data/
+src/generated/

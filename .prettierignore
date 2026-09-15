@@ -1,0 +1,8 @@
+dist/
+data/
+coverage/
+samples/
+src/generated/
+prisma/migrations/
+package-lock.json
+*.md
