@@ -22,8 +22,14 @@ export default defineConfig(
         {
           patterns: [
             { group: ['grammy', '@grammyjs/*'], message: 'core/ не знает о Telegram.' },
-            { group: ['**/generated/**', '@prisma/*', '**/db/**'], message: 'core/ не обращается к БД.' },
-            { group: ['**/delivery/**', '**/app/**'], message: 'core/ не зависит от внешних слоёв.' },
+            {
+              group: ['**/generated/**', '@prisma/*', '**/db/**'],
+              message: 'core/ не обращается к БД.',
+            },
+            {
+              group: ['**/delivery/**', '**/app/**'],
+              message: 'core/ не зависит от внешних слоёв.',
+            },
           ],
         },
       ],
