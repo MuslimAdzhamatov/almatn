@@ -94,11 +94,15 @@ function longestRun(runs: Run[], prefer: number): Run | null {
   return best;
 }
 
+/**
+ * pitch — шаг строк всего документа; передаётся явно, когда страницы размечаются по одной
+ * (на странице может быть слишком мало строк для надёжной оценки).
+ */
 export function layoutNumberedLines(
   lines: readonly NumberedLine[],
   rasters: ReadonlyMap<number, PageRaster>,
+  pitch: number = estimatePitch(lines),
 ): LineBox[] {
-  const pitch = estimatePitch(lines);
   const byPage = new Map<number, NumberedLine[]>();
   for (const line of lines) byPage.set(line.page, [...(byPage.get(line.page) ?? []), line]);
 

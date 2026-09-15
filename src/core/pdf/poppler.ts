@@ -103,3 +103,23 @@ export async function renderPages(
   }
   return result;
 }
+
+/** Одна страница в цвете из кэша outDir; рендерит, если её там ещё нет. */
+export async function renderPage(
+  file: string,
+  options: { outDir: string; dpi: number; page: number },
+): Promise<string> {
+  const pattern = new RegExp(`^r${options.dpi}c-0*${options.page}\\.png$`);
+  const cached = (await readdir(options.outDir)).find((name) => pattern.test(name));
+  if (cached) return join(options.outDir, cached);
+
+  const rendered = await renderPages(file, {
+    outDir: options.outDir,
+    dpi: options.dpi,
+    firstPage: options.page,
+    lastPage: options.page,
+  });
+  const path = rendered.get(options.page);
+  if (!path) throw new PdfToolError(`Страница ${options.page} не отрендерилась`, 'damaged');
+  return path;
+}

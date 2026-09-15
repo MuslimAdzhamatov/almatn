@@ -19,6 +19,20 @@ export async function imageSize(path: string): Promise<{ width: number; height: 
   return { width, height };
 }
 
-export async function cropPng(path: string, rect: PixelRect): Promise<Buffer> {
-  return sharp(path).extract(rect).png({ compressionLevel: 9 }).toBuffer();
+/**
+ * Вырезает фрагмент в PNG. Telegram отклоняет фото с соотношением сторон больше maxAspect:1,
+ * поэтому слишком узкая полоса (одна строка на всю ширину) дополняется белыми полями сверху и снизу.
+ */
+export async function cropPng(path: string, rect: PixelRect, maxAspect = 20): Promise<Buffer> {
+  const image = sharp(path).extract(rect);
+  const minHeight = Math.ceil(rect.width / maxAspect);
+  if (rect.height < minHeight) {
+    const pad = minHeight - rect.height;
+    image.extend({
+      top: Math.floor(pad / 2),
+      bottom: Math.ceil(pad / 2),
+      background: '#ffffff',
+    });
+  }
+  return image.png({ compressionLevel: 9 }).toBuffer();
 }
