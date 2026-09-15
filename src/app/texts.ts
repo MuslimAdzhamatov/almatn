@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { basename, extname } from 'node:path';
 import { BYTES_IN_MB, limits } from '../config/limits.js';
 import { groupIntoSegments, segmentPixelRect } from '../core/pdf/crop.js';
@@ -21,11 +22,28 @@ import { createSerialQueue } from './queue.js';
 
 const FLOW = 'upload';
 
+/** Присланный файл по данным Telegram — до скачивания; хранится в DialogState, пока бот ждёт ответа. */
+export interface IncomingFile {
+  fileId: string;
+  fileName: string;
+  mimeType?: string | undefined;
+  fileSize?: number | undefined;
+}
+
 export type UploadCheck =
   | { kind: 'ok' }
   | { kind: 'not_pdf' }
   | { kind: 'too_big'; limitMb: number }
-  | { kind: 'too_many_texts'; limit: number };
+  | { kind: 'too_many_texts'; limit: number }
+  /** Есть текст, ожидающий подтверждения разбора: сначала спросить, что с ним сделать. */
+  | { kind: 'pending_confirm'; textId: number; title: string; token: string };
+
+export type PendingChoice =
+  /** Заново показать сводку неподтверждённого текста; новый файл не загружается. */
+  | { kind: 'resume'; textId: number; title: string }
+  /** Неподтверждённый текст удалён (если он ещё ждал подтверждения) — загрузить новый файл. */
+  | { kind: 'replace'; removedTitle: string | null; file: IncomingFile }
+  | { kind: 'stale' };
 
 export type IngestResult =
   | { kind: 'accepted'; textId: number; queued: number }
@@ -85,7 +103,11 @@ export interface TextsDeps {
   files: FileStore;
   tools: PdfTools;
   reportError?: (err: unknown, context: Record<string, unknown>) => void;
+  /** Одноразовый токен вопроса о неподтверждённом тексте — делает старые кнопки неактуальными. */
+  newToken?: () => string;
 }
+
+const PENDING_STEP = 'pending_choice';
 
 export function titleFromFileName(fileName: string): string {
   // extname('.pdf') — пустая строка (Node считает это скрытым файлом), поэтому расширение режем явно.
@@ -102,6 +124,7 @@ export function createTexts({
   files,
   tools,
   reportError = () => undefined,
+  newToken = () => randomBytes(4).toString('hex'),
 }: TextsDeps) {
   const queue = createSerialQueue();
   const listeners: ((event: ParseEvent) => Promise<void> | void)[] = [];
@@ -214,23 +237,55 @@ export function createTexts({
     /** Дождаться окончания всех разборов (тесты, корректная остановка). */
     idle: () => queue.idle(),
 
-    /** Проверка до скачивания — по данным, которые Telegram сообщает о документе. */
-    async checkUpload(input: {
-      userId: bigint;
-      fileName: string;
-      mimeType?: string | undefined;
-      fileSize?: number | undefined;
-    }): Promise<UploadCheck> {
+    /**
+     * Проверка до скачивания — по данным, которые Telegram сообщает о документе.
+     * Если у пользователя есть неподтверждённый текст, файл запоминается в диалоге и бот спрашивает,
+     * что с тем текстом сделать (раньше лимита текстов: удаление неподтверждённого освобождает место).
+     */
+    async checkUpload(userId: bigint, file: IncomingFile): Promise<UploadCheck> {
       const isPdf =
-        input.mimeType === 'application/pdf' || extname(input.fileName).toLowerCase() === '.pdf';
+        file.mimeType === 'application/pdf' || extname(file.fileName).toLowerCase() === '.pdf';
       if (!isPdf) return { kind: 'not_pdf' };
-      if ((input.fileSize ?? 0) > limits.pdf.maxBytes) {
+      if ((file.fileSize ?? 0) > limits.pdf.maxBytes) {
         return { kind: 'too_big', limitMb: limits.pdf.maxBytes / BYTES_IN_MB };
       }
-      if ((await store.countByUser(input.userId)) >= limits.texts.maxPerUser) {
+      const pending = await store.findFirstByStatus(userId, 'awaiting_confirm');
+      if (pending) {
+        const token = newToken();
+        await dialogs.set(userId, {
+          flow: FLOW,
+          step: PENDING_STEP,
+          data: { token, textId: pending.id, file: { ...file } },
+        });
+        return { kind: 'pending_confirm', textId: pending.id, title: pending.title, token };
+      }
+      if ((await store.countByUser(userId)) >= limits.texts.maxPerUser) {
         return { kind: 'too_many_texts', limit: limits.texts.maxPerUser };
       }
       return { kind: 'ok' };
+    },
+
+    /** Ответ на вопрос о неподтверждённом тексте: keep — продолжить с ним, replace — удалить и загрузить новый. */
+    async choosePending(userId: bigint, token: string, choice: string): Promise<PendingChoice> {
+      const dialog = await dialogs.get(userId);
+      if (
+        dialog?.flow !== FLOW ||
+        dialog.step !== PENDING_STEP ||
+        dialog.data.token !== token ||
+        (choice !== 'keep' && choice !== 'replace')
+      ) {
+        return { kind: 'stale' };
+      }
+      await dialogs.clear(userId);
+      const text = await ownText(userId, Number(dialog.data.textId), 'awaiting_confirm');
+
+      if (choice === 'keep') {
+        return text ? { kind: 'resume', textId: text.id, title: text.title } : { kind: 'stale' };
+      }
+      // Текст могли подтвердить или отменить старыми кнопками — тогда удалять нечего, просто грузим файл.
+      if (text) await removeText(text);
+      const file = dialog.data.file as IncomingFile;
+      return { kind: 'replace', removedTitle: text?.title ?? null, file };
     },
 
     /** Скачанный файл: дубликат, пароль, число страниц → создание текста и постановка в очередь разбора. */

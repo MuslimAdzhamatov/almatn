@@ -19,11 +19,26 @@ export const textCallbacks = {
   reparse: 'txre',
   cancel: 'txno',
   keepTitle: 'txkeep',
+  pending: 'txpend',
 } as const;
 
 const MAX_ANOMALIES_SHOWN = 10;
 
-export function uploadCheckText(check: Exclude<UploadCheck, { kind: 'ok' }>): string {
+export function pendingQuestion(
+  check: Extract<UploadCheck, { kind: 'pending_confirm' }>,
+): RenderedMessage {
+  return {
+    text: t.pendingQuestion(check.title),
+    keyboard: new InlineKeyboard()
+      .text(t.buttons.resumePending(check.title), `${textCallbacks.pending}:${check.token}:keep`)
+      .row()
+      .text(t.buttons.replacePending, `${textCallbacks.pending}:${check.token}:replace`),
+  };
+}
+
+export function uploadCheckText(
+  check: Exclude<UploadCheck, { kind: 'ok' | 'pending_confirm' }>,
+): string {
   switch (check.kind) {
     case 'not_pdf':
       return t.notPdf;

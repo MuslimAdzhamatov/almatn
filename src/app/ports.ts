@@ -98,6 +98,8 @@ export interface TextsStore {
   get(textId: number): Promise<TextRecord | null>;
   update(textId: number, patch: TextPatch): Promise<void>;
   listByStatus(status: TextStatus): Promise<TextRecord[]>;
+  /** Самый старый текст пользователя в этом статусе. */
+  findFirstByStatus(userId: bigint, status: TextStatus): Promise<TextRecord | null>;
   delete(textId: number): Promise<void>;
   /** Заменяет все строки текста результатом нового разбора. */
   replaceLines(textId: number, lines: readonly LineBox[]): Promise<void>;

@@ -58,6 +58,14 @@ export function createTextsRepository(db: Db): TextsStore {
       return (await db.text.findMany({ where: { status } })).map(toRecord);
     },
 
+    async findFirstByStatus(userId, status) {
+      const row = await db.text.findFirst({
+        where: { userId, status },
+        orderBy: { createdAt: 'asc' },
+      });
+      return row ? toRecord(row) : null;
+    },
+
     async delete(textId) {
       await db.text.deleteMany({ where: { id: textId } });
     },

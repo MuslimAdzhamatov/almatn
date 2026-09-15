@@ -143,6 +143,11 @@ export const texts = {
         ? `Файл получен ✅ Разберу его, как только освобожусь (перед вами в очереди: ${queued - 1}).`
         : 'Файл получен ✅ Разбираю — обычно это занимает до минуты.',
     duplicate: (title: string) => `Этот файл уже загружен — текст «${title}».`,
+    pendingQuestion: (title: string) =>
+      `У вас есть неподтверждённый текст «${title}». Что сделать?`,
+    pendingResumed: (title: string) => `Продолжаем с «${title}» — сводка ниже.`,
+    pendingReplaced: (title: string | null) =>
+      title ? `Текст «${title}» удалён. Загружаю новый файл.` : 'Загружаю новый файл.',
     password: 'PDF защищён паролем. Сохраните его без пароля и пришлите снова.',
     damaged: 'Не получается прочитать этот PDF: похоже, файл повреждён.',
     empty: 'В этом PDF нет ни одной страницы.',
@@ -182,6 +187,8 @@ export const texts = {
       byNumbers: '🔢 Разобрать по номерам строк',
       cancel: 'Отмена',
       keepTitle: (title: string) => `Оставить «${shorten(title, 32)}»`,
+      resumePending: (title: string) => `Продолжить с «${shorten(title, 32)}»`,
+      replacePending: 'Удалить и загрузить новый',
     },
     unitChanged: (unit: UnitName) => (unit === 'bayts' ? 'Теперь — «бейты»' : 'Теперь — «строки»'),
     askTitle: (title: string) => `Как назвать текст? Напишите название или оставьте «${title}».`,

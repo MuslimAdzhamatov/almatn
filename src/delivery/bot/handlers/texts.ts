@@ -1,6 +1,6 @@
 import { GrammyError, type Bot, type InlineKeyboard } from 'grammy';
 import type { FileStore } from '../../../app/ports.js';
-import type { TextAction, Texts } from '../../../app/texts.js';
+import type { IncomingFile, TextAction, Texts } from '../../../app/texts.js';
 import type { Logger } from '../../../lib/logger.js';
 import type { BotContext } from '../context.js';
 import { downloadTelegramFile } from '../download.js';
@@ -12,6 +12,7 @@ import {
   ingestText,
   parseFailedText,
   parseSummaryKeyboard,
+  pendingQuestion,
   summaryText,
   textCallbacks,
   uploadCheckText,
@@ -59,17 +60,12 @@ async function showAction(ctx: BotContext, action: TextAction, viaButton: boolea
 }
 
 export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps) {
-  // Итог фонового разбора: сводка → картинка первых строк → кнопки подтверждения.
-  deps.texts.onParseEvent(async (event) => {
-    const chatId = Number(event.userId);
-    if (event.kind === 'failed') {
-      await bot.api.sendMessage(chatId, parseFailedText(event));
-      return;
-    }
-    const summary = await deps.texts.summary(event.textId);
+  /** Сводка разбора: текст → картинка первых строк → кнопки подтверждения. */
+  async function sendSummary(chatId: number, textId: number) {
+    const summary = await deps.texts.summary(textId);
     if (!summary) return;
     await bot.api.sendMessage(chatId, summaryText(summary));
-    const images = await deps.texts.previewImages(event.textId);
+    const images = await deps.texts.previewImages(textId);
     await sendImages(
       bot.api,
       chatId,
@@ -82,19 +78,18 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps) {
     await bot.api.sendMessage(chatId, texts.upload.confirmPrompt, {
       reply_markup: parseSummaryKeyboard(summary),
     });
-  });
+  }
 
-  bot.on('message:document', async (ctx) => {
-    const document = ctx.message.document;
+  /** Проверка → скачивание → постановка в очередь разбора. */
+  async function receiveFile(ctx: BotContext, file: IncomingFile) {
     const userId = ctx.user.id;
-    const fileName = document.file_name ?? 'document.pdf';
-
-    const check = await deps.texts.checkUpload({
-      userId,
-      fileName,
-      mimeType: document.mime_type,
-      fileSize: document.file_size,
-    });
+    const chatId = Number(userId);
+    const check = await deps.texts.checkUpload(userId, file);
+    if (check.kind === 'pending_confirm') {
+      const { text, keyboard } = pendingQuestion(check);
+      await ctx.reply(text, { reply_markup: keyboard });
+      return;
+    }
     if (check.kind !== 'ok') {
       await ctx.reply(uploadCheckText(check));
       return;
@@ -104,19 +99,61 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps) {
     const tempPath = await deps.files.tempPath('.pdf');
     let fileSize: number;
     try {
-      fileSize = await downloadTelegramFile(ctx.api, deps.token, document.file_id, tempPath);
+      fileSize = await downloadTelegramFile(ctx.api, deps.token, file.fileId, tempPath);
     } catch (err) {
       await deps.files.removeFile(tempPath);
       deps.logger.error(
         { error: err instanceof Error ? err.message : String(err), userId: String(userId) },
         'Не удалось скачать PDF',
       );
-      await ctx.api.editMessageText(ctx.chat.id, progress.message_id, texts.upload.downloadFailed);
+      await ctx.api.editMessageText(chatId, progress.message_id, texts.upload.downloadFailed);
       return;
     }
 
-    const result = await deps.texts.ingest({ userId, fileName, fileSize, tempPath });
-    await ctx.api.editMessageText(ctx.chat.id, progress.message_id, ingestText(result));
+    const result = await deps.texts.ingest({
+      userId,
+      fileName: file.fileName,
+      fileSize,
+      tempPath,
+    });
+    await ctx.api.editMessageText(chatId, progress.message_id, ingestText(result));
+  }
+
+  // Итог фонового разбора.
+  deps.texts.onParseEvent(async (event) => {
+    if (event.kind === 'failed') {
+      await bot.api.sendMessage(Number(event.userId), parseFailedText(event));
+      return;
+    }
+    await sendSummary(Number(event.userId), event.textId);
+  });
+
+  bot.on('message:document', async (ctx) => {
+    const document = ctx.message.document;
+    await receiveFile(ctx, {
+      fileId: document.file_id,
+      fileName: document.file_name ?? 'document.pdf',
+      mimeType: document.mime_type,
+      fileSize: document.file_size,
+    });
+  });
+
+  // Вопрос о неподтверждённом тексте: продолжить с ним или удалить и загрузить новый файл.
+  bot.callbackQuery(new RegExp(`^${textCallbacks.pending}:([0-9a-f]+):(\\w+)$`), async (ctx) => {
+    const token = Array.isArray(ctx.match) ? (ctx.match[1] ?? '') : '';
+    const choice = await deps.texts.choosePending(ctx.user.id, token, matchedArg(ctx));
+    if (choice.kind === 'stale') {
+      await ctx.answerCallbackQuery({ text: texts.upload.stale });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    if (choice.kind === 'resume') {
+      await editOrReply(ctx, texts.upload.pendingResumed(choice.title));
+      await sendSummary(Number(ctx.user.id), choice.textId);
+      return;
+    }
+    await editOrReply(ctx, texts.upload.pendingReplaced(choice.removedTitle));
+    await receiveFile(ctx, choice.file);
   });
 
   bot.callbackQuery(new RegExp(`^${textCallbacks.confirm}:(\\d+)$`), async (ctx) => {

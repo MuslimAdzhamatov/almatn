@@ -71,6 +71,8 @@ function setup() {
       Object.assign(texts.get(id)!, patch);
     },
     listByStatus: async (status) => [...texts.values()].filter((t) => t.status === status),
+    findFirstByStatus: async (userId, status) =>
+      [...texts.values()].find((t) => t.userId === userId && t.status === status) ?? null,
     delete: async (id) => {
       texts.delete(id);
       lines.delete(id);
@@ -81,14 +83,14 @@ function setup() {
     firstLines: async (id, count) => (lines.get(id) ?? []).slice(0, count),
   };
 
-  let dialog: DialogSnapshot | null = null;
+  const dialogByUser = new Map<bigint, DialogSnapshot>();
   const dialogs: DialogStore = {
-    get: async () => dialog,
-    set: async (_userId, next) => {
-      dialog = next;
+    get: async (userId) => dialogByUser.get(userId) ?? null,
+    set: async (userId, next) => {
+      dialogByUser.set(userId, next);
     },
-    clear: async () => {
-      dialog = null;
+    clear: async (userId) => {
+      dialogByUser.delete(userId);
     },
   };
 
@@ -136,12 +138,14 @@ function setup() {
   };
 
   const errors: unknown[] = [];
+  let tokens = 0;
   const service = createTexts({
     store,
     dialogs,
     files,
     tools,
     reportError: (err) => errors.push(err),
+    newToken: () => `t${++tokens}`,
   });
   const events: ParseEvent[] = [];
   service.onParseEvent((event) => {
@@ -159,14 +163,31 @@ function setup() {
     return result;
   }
 
-  return { pdf, texts, lines, service, events, removed, errors, upload, getDialog: () => dialog };
+  return {
+    pdf,
+    texts,
+    lines,
+    service,
+    events,
+    removed,
+    errors,
+    upload,
+    getDialog: () => dialogByUser.get(USER) ?? null,
+  };
 }
+
+const incoming = (fileName: string, mimeType?: string, fileSize = 1000) => ({
+  fileId: `file-${fileName}`,
+  fileName,
+  mimeType,
+  fileSize,
+});
 
 describe('проверка до скачивания', () => {
   it('принимает только PDF в пределах лимитов', async () => {
-    const { service, upload } = setup();
+    const { service, texts } = setup();
     const check = (fileName: string, mimeType?: string, fileSize = 1000) =>
-      service.checkUpload({ userId: USER, fileName, mimeType, fileSize });
+      service.checkUpload(USER, incoming(fileName, mimeType, fileSize));
 
     expect(await check('text.pdf')).toEqual({ kind: 'ok' });
     expect(await check('scan', 'application/pdf')).toEqual({ kind: 'ok' });
@@ -183,9 +204,115 @@ describe('проверка до скачивания', () => {
         fileSize: 1,
         tempPath: `/tmp/${i}`,
       });
-    expect(await check('eleventh.pdf')).toEqual({ kind: 'too_many_texts', limit: 10 });
     await service.idle();
-    void upload;
+    for (const text of texts.values()) text.status = 'ready';
+    expect(await check('eleventh.pdf')).toEqual({ kind: 'too_many_texts', limit: 10 });
+  });
+});
+
+describe('неподтверждённый текст при загрузке нового файла', () => {
+  it('разбор ещё идёт — не спрашиваем', async () => {
+    const { service, upload, texts } = setup();
+    await upload('a.pdf');
+    texts.get(1)!.status = 'parsing';
+    expect(await service.checkUpload(USER, incoming('b.pdf'))).toEqual({ kind: 'ok' });
+  });
+
+  it('спрашивает раньше лимита текстов и запоминает файл в диалоге', async () => {
+    const { service, upload, texts, getDialog } = setup();
+    await upload('first.pdf');
+    for (let i = 2; i <= 10; i++)
+      texts.set(100 + i, { ...texts.get(1)!, id: 100 + i, status: 'ready' });
+
+    expect(await service.checkUpload(USER, incoming('second.pdf', 'application/pdf'))).toEqual({
+      kind: 'pending_confirm',
+      textId: 1,
+      title: 'first',
+      token: 't1',
+    });
+    expect(getDialog()).toEqual({
+      flow: 'upload',
+      step: 'pending_choice',
+      data: {
+        token: 't1',
+        textId: 1,
+        file: {
+          fileId: 'file-second.pdf',
+          fileName: 'second.pdf',
+          mimeType: 'application/pdf',
+          fileSize: 1000,
+        },
+      },
+    });
+    // Чужой пользователь неподтверждённого текста не видит.
+    expect(await service.checkUpload(OTHER_USER, incoming('x.pdf'))).toEqual({ kind: 'ok' });
+  });
+
+  it('«Продолжить с …» — текст остаётся, сводка доступна, кнопки больше не работают', async () => {
+    const { service, upload, texts, getDialog } = setup();
+    await upload('first.pdf');
+    await service.checkUpload(USER, incoming('second.pdf'));
+
+    expect(await service.choosePending(OTHER_USER, 't1', 'keep')).toEqual({ kind: 'stale' });
+    expect(await service.choosePending(USER, 't1', 'keep')).toEqual({
+      kind: 'resume',
+      textId: 1,
+      title: 'first',
+    });
+    expect(texts.size).toBe(1);
+    expect(await service.summary(1)).toMatchObject({ textId: 1, totalLines: 8 });
+    expect(getDialog()).toBeNull();
+    expect(await service.choosePending(USER, 't1', 'replace')).toEqual({ kind: 'stale' });
+  });
+
+  it('«Удалить и загрузить новый» — текст и файлы удалены, возвращается сохранённый файл', async () => {
+    const { service, upload, texts, removed } = setup();
+    await upload('first.pdf');
+    await service.checkUpload(USER, incoming('second.pdf'));
+
+    expect(await service.choosePending(USER, 't1', 'replace')).toEqual({
+      kind: 'replace',
+      removedTitle: 'first',
+      file: { fileId: 'file-second.pdf', fileName: 'second.pdf', fileSize: 1000 },
+    });
+    expect(texts.size).toBe(0);
+    expect(removed).toContain('text:1');
+    expect(await service.checkUpload(USER, incoming('second.pdf'))).toEqual({ kind: 'ok' });
+    expect(await service.choosePending(USER, 't1', 'replace')).toEqual({ kind: 'stale' });
+  });
+
+  it('кнопки предыдущего вопроса неактуальны после нового файла', async () => {
+    const { service, upload } = setup();
+    await upload('first.pdf');
+    await service.checkUpload(USER, incoming('second.pdf'));
+    await service.checkUpload(USER, incoming('third.pdf'));
+    expect(await service.choosePending(USER, 't1', 'replace')).toEqual({ kind: 'stale' });
+    expect(await service.choosePending(USER, 't2', 'replace')).toMatchObject({
+      kind: 'replace',
+      file: { fileName: 'third.pdf' },
+    });
+  });
+
+  it('текст успели подтвердить старыми кнопками — он не удаляется', async () => {
+    const { service, upload, texts } = setup();
+    await upload('first.pdf');
+    await service.checkUpload(USER, incoming('second.pdf'));
+    texts.get(1)!.status = 'ready';
+
+    expect(await service.choosePending(USER, 't1', 'replace')).toEqual({
+      kind: 'replace',
+      removedTitle: null,
+      file: { fileId: 'file-second.pdf', fileName: 'second.pdf', fileSize: 1000 },
+    });
+    expect(texts.get(1)?.status).toBe('ready');
+  });
+
+  it('«Продолжить с …» для уже сохранённого текста — кнопка неактуальна', async () => {
+    const { service, upload, texts } = setup();
+    await upload('first.pdf');
+    await service.checkUpload(USER, incoming('second.pdf'));
+    texts.get(1)!.status = 'ready';
+    expect(await service.choosePending(USER, 't1', 'keep')).toEqual({ kind: 'stale' });
   });
 });
 
