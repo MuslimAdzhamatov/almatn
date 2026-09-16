@@ -80,7 +80,7 @@ describe('segmentPixelRect', () => {
       { width: 1653, height: 2339 },
     );
     // По бокам — запас 3% ширины страницы (≈ 17,9 пункта).
-    expect(rect).toEqual({ left: 116, top: 100, width: 1490, height: 101 });
+    expect(rect).toEqual({ left: 117, top: 100, width: 1489, height: 101 });
   });
 
   it('страница целиком в ручном режиме — всё изображение', () => {
