@@ -1,10 +1,24 @@
 import { InputFile, InputMediaBuilder, type Api } from 'grammy';
+import type { Message, PhotoSize } from 'grammy/types';
 
 export interface OutgoingImage {
-  png: Buffer;
+  /** PNG для загрузки или уже известный Telegram file_id. */
+  png?: Buffer | null;
+  fileId?: string | null;
   fileName: string;
   caption?: string;
 }
+
+export interface SentImages {
+  messageIds: number[];
+  /** file_id каждой картинки по порядку — для кэша вырезок. */
+  fileIds: (string | null)[];
+}
+
+const media = (image: OutgoingImage) =>
+  image.fileId ?? new InputFile(image.png ?? Buffer.alloc(0), image.fileName);
+
+const largest = (photo: PhotoSize[] | undefined) => photo?.at(-1)?.file_id ?? null;
 
 /**
  * Отправляет картинки: одна — sendPhoto, несколько — альбомами по 10 (лимит Telegram).
@@ -14,27 +28,24 @@ export async function sendImages(
   api: Api,
   chatId: number,
   images: readonly OutgoingImage[],
-): Promise<number[]> {
-  const messageIds: number[] = [];
+): Promise<SentImages> {
+  const sent: Message[] = [];
   for (let i = 0; i < images.length; i += 10) {
     const chunk = images.slice(i, i + 10);
     const [single] = chunk;
     if (chunk.length === 1 && single) {
-      const message = await api.sendPhoto(chatId, new InputFile(single.png, single.fileName), {
-        caption: single.caption,
-      });
-      messageIds.push(message.message_id);
+      sent.push(await api.sendPhoto(chatId, media(single), { caption: single.caption }));
     } else {
-      const messages = await api.sendMediaGroup(
-        chatId,
-        chunk.map((image) =>
-          InputMediaBuilder.photo(new InputFile(image.png, image.fileName), {
-            caption: image.caption,
-          }),
-        ),
+      sent.push(
+        ...(await api.sendMediaGroup(
+          chatId,
+          chunk.map((image) => InputMediaBuilder.photo(media(image), { caption: image.caption })),
+        )),
       );
-      messageIds.push(...messages.map((message) => message.message_id));
     }
   }
-  return messageIds;
+  return {
+    messageIds: sent.map((message) => message.message_id),
+    fileIds: sent.map((message) => ('photo' in message ? largest(message.photo) : null)),
+  };
 }

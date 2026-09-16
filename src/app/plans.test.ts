@@ -135,7 +135,7 @@ describe('создание плана', () => {
     expect(confirm.overlap).toBeNull();
 
     const started = expectKind(await service.act(USER, token, 'go', '', NOW), 'started');
-    expect(started.sendTime).toBe('06:00');
+    expect(started).toMatchObject({ planId: 1, timezone: 'Europe/Moscow' });
     expect(planRows).toEqual([
       expect.objectContaining({
         textId: 1,

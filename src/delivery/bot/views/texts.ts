@@ -4,11 +4,12 @@ import type {
   IngestResult,
   LineImage,
   ParseEvent,
+  PreviewContext,
   TextAction,
   TextSummary,
   UploadCheck,
 } from '../../../app/texts.js';
-import { texts, unitCount, unitRangeLabel } from '../texts.js';
+import { texts, unitAccusative, unitCount, unitRangeLabel } from '../texts.js';
 import type { RenderedMessage } from './onboarding.js';
 
 const t = texts.upload;
@@ -23,6 +24,7 @@ export const textCallbacks = {
   images: 'tximg',
   reparseMenu: 'txmenu',
   reparseInput: 'txask',
+  context: 'txctx',
 } as const;
 
 const STRATEGY_BUTTONS: readonly ParseStrategy[] = [
@@ -153,10 +155,23 @@ export function imageCaption(summary: TextSummary, image: LineImage): string {
   return unitRangeLabel(image.lineStart, image.lineEnd, summary.strategy, summary.unitName);
 }
 
-export function parseSummaryKeyboard(summary: TextSummary): InlineKeyboard {
+/** Кнопки контекста под сводкой; состояние — в callback_data, в базе ничего не хранится. */
+export const SUMMARY_CONTEXT_CALLBACK = new RegExp(
+  `^${textCallbacks.context}:(\\d+):(\\d+):(\\d+):(more|down)$`,
+);
+
+export function parseSummaryKeyboard(
+  summary: TextSummary,
+  context: PreviewContext = { margin: 0, after: 0 },
+): InlineKeyboard {
   const id = summary.textId;
+  const state = `${textCallbacks.context}:${id}:${context.margin}:${context.after}`;
+  const one = unitAccusative(summary.strategy, summary.unitName);
   const keyboard = new InlineKeyboard()
     .text(t.buttons.confirm, `${textCallbacks.confirm}:${id}`)
+    .row()
+    .text(texts.learn.buttons.more, `${state}:more`)
+    .text(texts.learn.buttons.down(one), `${state}:down`)
     .row();
   if (summary.strategy !== 'manual_page' && summary.strategy !== 'manual_split') {
     const nextUnit = nextUnitName(summary);

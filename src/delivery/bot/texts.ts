@@ -315,12 +315,14 @@ export const texts = {
           ? `В ближайшие 2 недели по ним ${total} ${pluralRu(total, ['единица', 'единицы', 'единиц'])} повтора (до ${peak} в день); вместе с новым планом — до ${combined} в день.`
           : `Вместе с новым планом повторение на пике — до ${combined} в день.`,
       ].join('\n'),
-    started: (title: string, first: string) =>
-      `План «${title}» создан ✅\n\nПервая порция — ${first}.\nВыдача порций по расписанию появится в ближайшем обновлении бота.`,
+    started: (title: string, next: string) => `План «${title}» создан ✅\n\n${next}`,
+    firstNow: 'Первая порция — прямо сейчас 👇',
+    firstAt: (when: string) => `Первая порция придёт ${when}.`,
+    firstPaused: 'Бот на паузе — первая порция придёт после её окончания.',
+    firstRetry: 'Первую порцию пришлю через минуту-другую.',
     postponed: 'Хорошо, план можно будет составить позже.',
     alreadyPlanned: (title: string) => `У текста «${title}» уже есть активный план.`,
     stale: 'Эта кнопка уже неактуальна',
-    today: 'сегодня',
 
     weekdays: ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'],
     weekdaysShort: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
@@ -350,6 +352,51 @@ export const texts = {
       editStart: 'Изменить дату начала',
       editTime: 'Изменить время',
       back: '← Назад',
+    },
+  },
+
+  learn: {
+    portion: (title: string, range: string) =>
+      `📖 «${title}» — ${range}.\n\nВыучите и нажмите «Выучил». Повторы начнутся от этого момента.`,
+    portionReplaced: (title: string, range: string) =>
+      `🔁 Порция заменена: «${title}» — ${range}.\n\nВыучите и нажмите «Выучил».`,
+    reminder: (title: string, range: string) =>
+      `⏰ Напоминание: «${title}» — ${range}. Отметьте, когда выучите.`,
+    learned: (title: string, range: string) => `✅ «${title}» — ${range}: выучено!`,
+    reviewsTitle: 'Повторы:',
+    reviewStages: ['через 12 часов', 'через сутки', 'через 3 дня', 'через 2 недели', 'через месяц'],
+    nextSent: 'Следующая порция — ниже 👇',
+    nextAt: (when: string) => `Следующая порция — ${when}.`,
+    nextDebt: 'Следующая порция придёт, когда будут сделаны все повторы.',
+    nextDone: 'Это была последняя порция плана 🎉 Остались только повторы.',
+    nextPaused: 'Бот на паузе — следующая порция придёт после её окончания.',
+    nextRetry: 'Следующую порцию пришлю через минуту-другую.',
+    alreadyLearned: 'Эта порция уже отмечена «Выучил»',
+    stillLearning: 'Хорошо. Нажмите «Выучил», когда выучите — до этого новая порция не придёт.',
+    remindAt: (time: string) => `Напомню в ${time}`,
+    contextLimit: (max: number) => `Больше нельзя — не больше ${max} раз`,
+    edgeUp: 'Выше ничего нет',
+    edgeDown: 'Ниже ничего нет',
+    failed: 'Не получилось отправить, попробуйте ещё раз',
+    stale: 'Эта кнопка уже неактуальна',
+    skipQuestion: (many: string) =>
+      `Какие ${many} пропустить? Они не будут приходить ни в порциях, ни в повторах, а порция пополнится следующими.`,
+    skipTooMany: 'Пропустить всю порцию? Она не будет приходить ни в порциях, ни в повторах.',
+    skipped: (list: string) => `⏭ Пропущено: ${list}.`,
+    skippedReplaced: (endDate: string) =>
+      `Порция пополнена следующими — она выше. Заучивание закончится ${endDate}.`,
+    skippedNothingLeft: 'В плане больше нечего учить — остались только повторы.',
+    buttons: {
+      learned: '✅ Выучил',
+      still: 'Ещё учу',
+      later: '⏰ Позже',
+      more: '🔍 Захватить больше',
+      up: (one: string) => `⬆️ Ещё ${one} выше`,
+      down: (one: string) => `⬇️ Ещё ${one} ниже`,
+      skip: '⏭ Пропустить…',
+      skipSelected: (n: number) => `⏭ Пропустить выбранные (${n})`,
+      skipAll: 'Всю порцию',
+      cancel: 'Отмена',
     },
   },
 
@@ -399,6 +446,24 @@ export function pluralRu(n: number, [one, few, many]: readonly [string, string, 
 /** «448 бейтов», «1 страница». */
 export function unitCount(n: number, strategy: ParseStrategy, unitName: UnitName): string {
   return `${n} ${pluralRu(n, NOUNS[unitKind(strategy, unitName)])}`;
+}
+
+/** «Ещё бейт / строку / страницу выше» — винительный падеж единственного числа. */
+const ACCUSATIVE = {
+  lines: 'строку',
+  bayts: 'бейт',
+  hadiths: 'хадис',
+  paragraphs: 'абзац',
+  pages: 'страницу',
+} as const;
+
+export function unitAccusative(strategy: ParseStrategy, unitName: UnitName): string {
+  return ACCUSATIVE[unitKind(strategy, unitName)];
+}
+
+/** «бейты», «строки» — для вопроса «Какие … пропустить?». */
+export function unitPluralNominative(strategy: ParseStrategy, unitName: UnitName): string {
+  return RANGE_LABELS[unitKind(strategy, unitName)].toLowerCase();
 }
 
 /** Родительный падеж после «до»: «до 21 бейта», «до 72 бейтов». */

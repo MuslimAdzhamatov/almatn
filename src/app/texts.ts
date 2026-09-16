@@ -95,6 +95,18 @@ export type TextAction =
   | { kind: 'invalid_title'; maxLength: number }
   | { kind: 'stale' };
 
+/** Кнопки контекста под сводкой: сколько раз расширяли вырезку и сколько единиц досланы снизу. */
+export interface PreviewContext {
+  margin: number;
+  after: number;
+}
+
+export type PreviewContextResult =
+  | { kind: 'sent'; images: LineImage[]; state: PreviewContext }
+  | { kind: 'limit'; max: number }
+  | { kind: 'edge' }
+  | { kind: 'stale' };
+
 export type ParseEvent =
   | { kind: 'parsed'; userId: bigint; textId: number }
   | {
@@ -506,6 +518,39 @@ export function createTexts({
       if (!text) return [];
       const count = text.parseStrategy === 'manual_page' ? 1 : limits.pdf.previewLines;
       return images.render(text, await store.firstLines(textId, count));
+    },
+
+    /** «Захватить больше» / «Ещё ниже» под сводкой — только картинки, разбор не меняется. */
+    async previewContext(
+      userId: bigint,
+      textId: number,
+      action: 'more' | 'down',
+      state: PreviewContext,
+    ): Promise<PreviewContextResult> {
+      const text = await ownText(userId, textId, 'awaiting_confirm');
+      if (!text) return { kind: 'stale' };
+      const count = text.parseStrategy === 'manual_page' ? 1 : limits.pdf.previewLines;
+      const L = limits.learning;
+      if (action === 'more') {
+        const margin = state.margin + 1;
+        if (margin > L.maxMarginSteps) return { kind: 'limit', max: L.maxMarginSteps };
+        const boxes = await store.firstLines(textId, count);
+        return {
+          kind: 'sent',
+          images: await images.render(text, boxes, margin),
+          state: { ...state, margin },
+        };
+      }
+      const after = state.after + 1;
+      if (after > L.maxExtraUnits) return { kind: 'limit', max: L.maxExtraUnits };
+      const lines = await store.firstLines(textId, count + after);
+      const next = lines[count + after - 1];
+      if (!next) return { kind: 'edge' };
+      return {
+        kind: 'sent',
+        images: await images.render(text, [next]),
+        state: { ...state, after },
+      };
     },
 
     async confirm(userId: bigint, textId: number): Promise<TextAction> {

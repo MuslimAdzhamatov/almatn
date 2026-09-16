@@ -24,6 +24,7 @@ import {
   pendingQuestion,
   reparseKeyboard,
   summaryText,
+  SUMMARY_CONTEXT_CALLBACK,
   textCallbacks,
   uploadCheckText,
 } from '../views/texts.js';
@@ -328,6 +329,43 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): Te
       await deps.texts.askReparseInput(ctx.user.id, matchedId(ctx), matchedArg(ctx)),
       true,
     );
+  });
+
+  // «Захватить больше» / «Ещё ниже» под сводкой: картинки новыми сообщениями, состояние — в кнопках.
+  bot.callbackQuery(SUMMARY_CONTEXT_CALLBACK, async (ctx) => {
+    const [, id = '', margin = '0', after = '0', action = 'more'] = ctx.match;
+    const textId = Number(id);
+    const result = await deps.texts.previewContext(ctx.user.id, textId, action as 'more' | 'down', {
+      margin: Number(margin),
+      after: Number(after),
+    });
+    if (result.kind === 'stale') {
+      await ctx.answerCallbackQuery({ text: texts.upload.stale });
+      return;
+    }
+    if (result.kind === 'limit') {
+      await ctx.answerCallbackQuery({ text: texts.learn.contextLimit(result.max) });
+      return;
+    }
+    if (result.kind === 'edge') {
+      await ctx.answerCallbackQuery({ text: texts.learn.edgeDown });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    const summary = await deps.texts.summary(textId);
+    if (!summary) return;
+    await sendImages(
+      ctx.api,
+      Number(ctx.user.id),
+      result.images.map((image) => ({
+        png: image.png,
+        fileName: `lines-${image.lineStart}-${image.lineEnd}.png`,
+        caption: imageCaption(summary, image),
+      })),
+    );
+    await ctx
+      .editMessageReplyMarkup({ reply_markup: parseSummaryKeyboard(summary, result.state) })
+      .catch(() => undefined);
   });
 
   bot.callbackQuery(new RegExp(`^${textCallbacks.cancel}:(\\d+)$`), async (ctx) => {

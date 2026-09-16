@@ -538,6 +538,31 @@ describe('загрузка и разбор', () => {
     expect(preview[0]).toMatchObject({ page: 1, lineStart: 1, lineEnd: 5 });
   });
 
+  it('кнопки контекста под сводкой: запас вырезки и следующие строки', async () => {
+    const { upload, service } = setup();
+    await upload();
+    const start = { margin: 0, after: 0 };
+    const more = await service.previewContext(USER, 1, 'more', start);
+    expect(more).toMatchObject({ kind: 'sent', state: { margin: 1, after: 0 } });
+    if (more.kind === 'sent') {
+      const plain = await service.previewImages(1);
+      // Запас сверху и снизу — картинка выше обычной.
+      const height = (png: Buffer) => (JSON.parse(png.toString()) as { height: number }).height;
+      expect(height(more.images[0]!.png)).toBeGreaterThan(height(plain[0]!.png));
+    }
+    expect(await service.previewContext(USER, 1, 'more', { margin: 3, after: 0 })).toEqual({
+      kind: 'limit',
+      max: 3,
+    });
+
+    const down = await service.previewContext(USER, 1, 'down', start);
+    expect(down).toMatchObject({ kind: 'sent', state: { after: 1 }, images: [{ lineStart: 6 }] });
+    expect(await service.previewContext(USER, 1, 'down', { margin: 0, after: 3 })).toEqual({
+      kind: 'edge',
+    });
+    expect(await service.previewContext(OTHER_USER, 1, 'down', start)).toEqual({ kind: 'stale' });
+  });
+
   it('без номеров строк — постранично, с объяснением причины', async () => {
     const { upload, pdf, texts, service } = setup();
     pdf.words = [blankPage(1), blankPage(2)];

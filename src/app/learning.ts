@@ -57,8 +57,15 @@ export type NextPortion =
   | { kind: 'retry' };
 
 export type PortionAction =
-  | { kind: 'learned'; portion: PortionInfo; reviews: ScheduledStage[]; next: NextPortion }
-  | { kind: 'already_learned'; portion: PortionInfo }
+  | {
+      kind: 'learned';
+      portion: PortionInfo;
+      reviews: ScheduledStage[];
+      next: NextPortion;
+      /** Под сообщением порции остаются кнопки контекста, под напоминанием — ничего. */
+      withContext: boolean;
+    }
+  | { kind: 'already_learned'; portion: PortionInfo; withContext: boolean }
   | { kind: 'still_learning'; portion: PortionInfo }
   | { kind: 'remind_later'; portion: PortionInfo; at: Date }
   | { kind: 'context_sent' }
@@ -439,22 +446,42 @@ export function createLearning({
       const r = await resolve(userId, deliveryId);
       if (!r) return { kind: 'stale' };
       const info = portionInfo(r.ctx, r.portion);
-      if (r.portion.status !== 'sent') return { kind: 'already_learned', portion: info };
+      if (r.portion.status !== 'sent')
+        return {
+          kind: 'already_learned',
+          portion: info,
+          withContext: r.delivery.kind === 'portion',
+        };
       const anchor = nearestSlot(now, r.ctx.user);
       const reviews = reviewChain(anchor, now, r.ctx.user);
       if (!(await store.markLearned(r.portion.id, now, anchor.at, reviews))) {
-        return { kind: 'already_learned', portion: info };
+        return {
+          kind: 'already_learned',
+          portion: info,
+          withContext: r.delivery.kind === 'portion',
+        };
       }
       // Статус отправки не меняется: кнопки контекста под порцией продолжают работать.
       const next = await issueIfDue(r.ctx.plan.id, now);
-      return { kind: 'learned', portion: info, reviews, next };
+      return {
+        kind: 'learned',
+        portion: info,
+        reviews,
+        next,
+        withContext: r.delivery.kind === 'portion',
+      };
     },
 
     async stillLearning(userId: bigint, deliveryId: number): Promise<PortionAction> {
       const r = await resolve(userId, deliveryId);
       if (!r) return { kind: 'stale' };
       const info = portionInfo(r.ctx, r.portion);
-      if (r.portion.status !== 'sent') return { kind: 'already_learned', portion: info };
+      if (r.portion.status !== 'sent')
+        return {
+          kind: 'already_learned',
+          portion: info,
+          withContext: r.delivery.kind === 'portion',
+        };
       await store.cancelLearnReminder(r.portion.id);
       return { kind: 'still_learning', portion: info };
     },
@@ -463,7 +490,12 @@ export function createLearning({
       const r = await resolve(userId, deliveryId);
       if (!r) return { kind: 'stale' };
       const info = portionInfo(r.ctx, r.portion);
-      if (r.portion.status !== 'sent') return { kind: 'already_learned', portion: info };
+      if (r.portion.status !== 'sent')
+        return {
+          kind: 'already_learned',
+          portion: info,
+          withContext: r.delivery.kind === 'portion',
+        };
       const dueAt = new Date(now.getTime() + L.remindLaterMin * MINUTE);
       await store.rescheduleLearnReminder(r.portion.id, dueAt);
       return { kind: 'remind_later', portion: info, at: applyQuietHours(dueAt, r.ctx.user) };
@@ -519,7 +551,12 @@ export function createLearning({
       const r = await resolve(userId, deliveryId);
       if (!r || r.delivery.kind !== 'portion') return { kind: 'stale' };
       const info = portionInfo(r.ctx, r.portion);
-      if (r.portion.status !== 'sent') return { kind: 'already_learned', portion: info };
+      if (r.portion.status !== 'sent')
+        return {
+          kind: 'already_learned',
+          portion: info,
+          withContext: r.delivery.kind === 'portion',
+        };
       const units = await portionUnits(r);
       if (units.length <= 1) return skipUnits(r, units, now);
       return {
@@ -563,7 +600,11 @@ export function createLearning({
       const r = await resolve(userId, deliveryId);
       if (!r || r.delivery.kind !== 'portion') return { kind: 'stale' };
       if (r.portion.status !== 'sent') {
-        return { kind: 'already_learned', portion: portionInfo(r.ctx, r.portion) };
+        return {
+          kind: 'already_learned',
+          portion: portionInfo(r.ctx, r.portion),
+          withContext: true,
+        };
       }
       const units = await portionUnits(r);
       const chosen =

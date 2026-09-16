@@ -2,6 +2,7 @@ import { autoRetry } from '@grammyjs/auto-retry';
 import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { Bot, GrammyError, HttpError } from 'grammy';
 import type { BotCommand } from 'grammy/types';
+import type { Learning } from '../../app/learning.js';
 import type { Onboarding } from '../../app/onboarding.js';
 import type { Plans } from '../../app/plans.js';
 import type { FileStore } from '../../app/ports.js';
@@ -9,6 +10,7 @@ import type { Texts } from '../../app/texts.js';
 import type { UsersRepository } from '../../db/repositories/users.js';
 import type { Logger } from '../../lib/logger.js';
 import type { BotContext } from './context.js';
+import { registerLearning } from './handlers/learning.js';
 import { registerOnboarding } from './handlers/onboarding.js';
 import { registerPlans, type PlansHandlers } from './handlers/plans.js';
 import { registerTexts } from './handlers/texts.js';
@@ -19,6 +21,7 @@ export interface BotDeps {
   onboarding: Onboarding;
   texts: Texts;
   plans: Plans;
+  learning: Learning;
   files: FileStore;
   logger: Logger;
 }
@@ -56,7 +59,8 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
     onSaved: (ctx, textId) => plansHandlers?.begin(ctx, textId) ?? Promise.resolve(),
   });
   registerOnboarding(bot, deps.onboarding, { onFinished: textsHandlers.processPending });
-  plansHandlers = registerPlans(bot, deps.plans);
+  plansHandlers = registerPlans(bot, deps.plans, deps.learning);
+  registerLearning(bot, deps.learning);
 
   bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);

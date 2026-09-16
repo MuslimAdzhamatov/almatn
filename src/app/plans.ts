@@ -136,11 +136,11 @@ export type PlanScreen =
     }
   | {
       kind: 'started';
+      planId: number;
       title: string;
       unit: UnitInfo;
       summary: PlanSummary;
-      today: IsoDate;
-      sendTime: string;
+      timezone: string;
     }
   | { kind: 'postponed' }
   | { kind: 'already_planned'; title: string }
@@ -467,11 +467,11 @@ export function createPlans({
     if (!created) return { kind: 'already_planned', title: text.title };
     return {
       kind: 'started',
+      planId: created.id,
       title: text.title,
       unit: unitOf(text),
       summary,
-      today: localDate(now, settings.timezone),
-      sendTime: settings.dailySendTime,
+      timezone: settings.timezone,
     };
   }
 

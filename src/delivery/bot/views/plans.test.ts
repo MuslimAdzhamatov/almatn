@@ -59,7 +59,7 @@ const screens: Exclude<PlanScreen, { kind: 'stale' }>[] = [
     schedule,
     overlap: { titles: ['Второй'], upcomingTotal: 40, upcomingPeak: 10, combinedPeak: 35 },
   },
-  { kind: 'started', title: 'Манзума', unit, summary, today: '2026-09-16', sendTime: '06:00' },
+  { kind: 'started', planId: 1, title: 'Манзума', unit, summary, timezone: 'Europe/Moscow' },
   { kind: 'postponed' },
   { kind: 'already_planned', title: 'Манзума' },
 ];

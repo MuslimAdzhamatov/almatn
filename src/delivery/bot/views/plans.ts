@@ -1,4 +1,5 @@
 import { InlineKeyboard } from 'grammy';
+import type { NextPortion } from '../../../app/learning.js';
 import type { PlanScreen, UnitInfo } from '../../../app/plans.js';
 import { formatUserDate } from '../../../core/plan/dates.js';
 import {
@@ -9,6 +10,7 @@ import {
   unitNounMany,
   unitRangeLabel,
 } from '../texts.js';
+import { whenText } from './learning.js';
 import type { RenderedMessage } from './onboarding.js';
 
 const t = texts.plan;
@@ -39,7 +41,22 @@ function rowOf(keyboard: InlineKeyboard, buttons: [label: string, data: string][
 
 type Shown = Exclude<PlanScreen, { kind: 'stale' }>;
 
-export function renderPlan(screen: Shown): RenderedMessage {
+/** Когда придёт первая порция — после «Начать». */
+function firstPortionText(next: NextPortion | undefined, timezone: string): string {
+  switch (next?.kind) {
+    case 'sent':
+      return t.firstNow;
+    case 'at':
+      return t.firstAt(whenText(next.at, timezone));
+    case 'paused':
+      return t.firstPaused;
+    default:
+      return t.firstRetry;
+  }
+}
+
+/** next — когда придёт первая порция (для экрана «План создан»). */
+export function renderPlan(screen: Shown, next?: NextPortion): RenderedMessage {
   switch (screen.kind) {
     case 'scope': {
       const { token } = screen;
@@ -188,16 +205,8 @@ export function renderPlan(screen: Shown): RenderedMessage {
     case 'confirm':
       return { text: confirmText(screen), keyboard: confirmKeyboard(screen.token) };
 
-    case 'started': {
-      const first = screen.summary.firstDate;
-      const date = formatUserDate(first);
-      return {
-        text: t.started(
-          screen.title,
-          first === screen.today ? `${t.today}, ${date}` : `${date} в ${screen.sendTime}`,
-        ),
-      };
-    }
+    case 'started':
+      return { text: t.started(screen.title, firstPortionText(next, screen.timezone)) };
 
     case 'postponed':
       return { text: t.postponed };
