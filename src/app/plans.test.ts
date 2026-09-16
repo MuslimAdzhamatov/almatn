@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createPlans, type PlanScreen } from './plans.js';
+import { createPlans, type PlanLimits, type PlanScreen } from './plans.js';
 import type {
   DialogSnapshot,
   DialogStore,
@@ -350,5 +350,13 @@ describe('создание плана', () => {
     const { token } = expectKind(await service.begin(USER, 1, NOW), 'scope');
     expectKind(await service.act(USER, token, 'later', '', NOW), 'postponed');
     expect(dialogMap.has(USER)).toBe(false);
+  });
+});
+
+describe('пороги из конфига', () => {
+  it('совпадают с разделом 5.3 и подходят сценарию', async () => {
+    const { limits } = await import('../config/limits.js');
+    const planLimits: PlanLimits = limits.plan;
+    expect(planLimits).toMatchObject({ maxUnitsPerDay: 10, maxPeakReview: 50 });
   });
 });

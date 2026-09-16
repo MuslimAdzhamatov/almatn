@@ -31,6 +31,17 @@ export const limits = {
     maxPerUser: 10,
     maxTitleLength: 100,
   },
+  /** Создание плана (CLAUDE.md, раздел 5.3). */
+  plan: {
+    /** Больше стольких новых единиц в день — мягкое предупреждение о перегрузке. */
+    maxUnitsPerDay: 10,
+    /** Больше стольких единиц повтора на пике — мягкое предупреждение о перегрузке. */
+    maxPeakReview: 50,
+    /** Самый длинный срок плана — 3 года. */
+    maxPlanDays: 3 * 365,
+    /** На сколько дней вперёд можно отложить начало. */
+    maxStartDelayDays: 365,
+  },
 } as const;
 
 export const BYTES_IN_MB = MB;
