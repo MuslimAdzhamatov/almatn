@@ -49,13 +49,15 @@ describe.skipIf(!hasPoppler)('эталонные PDF', () => {
       }
       const boxes = layoutNumberedLines(parse!.lines, rasters);
 
-      const heights = boxes.map((box) => box.yBottom - box.yTop);
+      // У строки, разобранной по номерам, ровно один фрагмент — сама строка.
+      expect(boxes.every((box) => box.fragments.length === 1)).toBe(true);
+      const heights = boxes.map((box) => box.fragments[0]!.yBottom - box.fragments[0]!.yTop);
       expect(Math.min(...heights)).toBeGreaterThan(20);
       expect(Math.max(...heights)).toBeLessThan(40);
       expect(boxes.find((box) => box.lineNumber === 10)?.sectionBreakBefore).toBe(true);
       expect(boxes.find((box) => box.lineNumber === 2)?.sectionBreakBefore).toBe(false);
       for (let i = 1; i < boxes.length; i++) {
-        const [prev, cur] = [boxes[i - 1]!, boxes[i]!];
+        const [prev, cur] = [boxes[i - 1]!.fragments[0]!, boxes[i]!.fragments[0]!];
         if (prev.page === cur.page) expect(cur.yTop).toBeGreaterThanOrEqual(prev.yBottom - 0.01);
       }
     } finally {

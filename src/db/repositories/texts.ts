@@ -1,6 +1,6 @@
 import type { ParseReport, TextRecord, TextsStore } from '../../app/ports.js';
 import type { LineBox } from '../../core/pdf/layout.js';
-import { Prisma, type Line, type Text } from '../../generated/prisma/client.js';
+import { Prisma, type Line, type LineFragment, type Text } from '../../generated/prisma/client.js';
 import type { Db } from '../client.js';
 
 function toRecord(row: Text): TextRecord {
@@ -8,16 +8,22 @@ function toRecord(row: Text): TextRecord {
   return { ...row, parseReport: (row.parseReport as unknown as ParseReport | null) ?? null };
 }
 
-function toBox(row: Line): LineBox {
+function toBox(row: Line & { fragments: LineFragment[] }): LineBox {
   return {
     lineNumber: row.lineNumber,
     printedNumber: row.printedNumber,
     page: row.page,
-    yTop: row.yTop,
-    yBottom: row.yBottom,
-    xLeft: row.xLeft,
-    xRight: row.xRight,
     sectionBreakBefore: row.sectionBreakBefore,
+    fragments: [...row.fragments]
+      .sort((a, b) => a.seq - b.seq)
+      .map(({ kind, page, yTop, yBottom, xLeft, xRight }) => ({
+        kind,
+        page,
+        yTop,
+        yBottom,
+        xLeft,
+        xRight,
+      })),
   };
 }
 
@@ -71,10 +77,30 @@ export function createTextsRepository(db: Db): TextsStore {
     },
 
     async replaceLines(textId, lines) {
-      await db.$transaction([
-        db.line.deleteMany({ where: { textId } }),
-        db.line.createMany({ data: lines.map((line) => ({ textId, ...line })) }),
-      ]);
+      // Фрагменты создаются вторым запросом: id строк известны только после вставки.
+      await db.$transaction(async (tx) => {
+        await tx.line.deleteMany({ where: { textId } });
+        const created = await tx.line.createManyAndReturn({
+          data: lines.map(({ lineNumber, printedNumber, page, sectionBreakBefore }) => ({
+            textId,
+            lineNumber,
+            printedNumber,
+            page,
+            sectionBreakBefore,
+          })),
+          select: { id: true, lineNumber: true },
+        });
+        const idByNumber = new Map(created.map((row) => [row.lineNumber, row.id]));
+        await tx.lineFragment.createMany({
+          data: lines.flatMap((line) =>
+            line.fragments.map((fragment, seq) => ({
+              lineId: idByNumber.get(line.lineNumber)!,
+              seq,
+              ...fragment,
+            })),
+          ),
+        });
+      });
     },
 
     async firstLines(textId, count) {
@@ -82,6 +108,7 @@ export function createTextsRepository(db: Db): TextsStore {
         where: { textId },
         orderBy: { lineNumber: 'asc' },
         take: count,
+        include: { fragments: { orderBy: { seq: 'asc' } } },
       });
       return rows.map(toBox);
     },

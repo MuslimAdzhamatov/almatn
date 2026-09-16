@@ -1,4 +1,4 @@
-import type { LineBox } from './layout.js';
+import { textFragment, type LineBox } from './layout.js';
 
 // Ручной режим (CLAUDE.md, раздел 4.1, стратегия 4): единица заучивания — страница целиком.
 
@@ -13,10 +13,7 @@ export function pagesAsUnits(pages: readonly PageSize[]): LineBox[] {
     lineNumber: index + 1,
     printedNumber: null,
     page: page.page,
-    yTop: 0,
-    yBottom: page.heightPt,
-    xLeft: null,
-    xRight: null,
     sectionBreakBefore: false,
+    fragments: [textFragment(page.page, 0, page.heightPt)],
   }));
 }

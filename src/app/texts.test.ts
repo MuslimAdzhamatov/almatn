@@ -56,6 +56,7 @@ function setup() {
         ...data,
         id: nextId++,
         unitName: 'lines',
+        sourceKind: 'pdf',
         totalLines: 0,
         parseStrategy: null,
         status: 'parsing',

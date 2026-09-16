@@ -44,17 +44,22 @@ describe('layoutNumberedLines', () => {
     new Map([[1, { page: 1, widthPt: 100, heightPt: 200, image: page }]]),
   );
 
+  /** У строки один фрагмент — сама строка. */
+  const frag = (index: number) => boxes[index]?.fragments[0];
+
   it('делит соседние строки посередине пустой полосы между ними', () => {
-    expect(boxes[0]).toMatchObject({ yTop: 7, yBottom: 33, sectionBreakBefore: false });
-    expect(boxes[1]?.yTop).toBe(33);
+    expect(boxes[0]).toMatchObject({ sectionBreakBefore: false });
+    expect(frag(0)).toMatchObject({ kind: 'text', page: 1, yTop: 7, yBottom: 33 });
+    expect(frag(1)?.yTop).toBe(33);
   });
 
   it('оставляет харакаты со своей строкой и не захватывает заголовок', () => {
-    expect(boxes[1]?.yBottom).toBe(61);
-    expect(boxes[2]).toMatchObject({ yTop: 127, yBottom: 153, sectionBreakBefore: true });
+    expect(frag(1)?.yBottom).toBe(61);
+    expect(boxes[2]).toMatchObject({ sectionBreakBefore: true });
+    expect(frag(2)).toMatchObject({ yTop: 127, yBottom: 153 });
   });
 
   it('ширина вырезки — текстовый блок страницы с полями', () => {
-    for (const box of boxes) expect(box).toMatchObject({ xLeft: 14, xRight: 87 });
+    for (const box of boxes) expect(box.fragments[0]).toMatchObject({ xLeft: 14, xRight: 87 });
   });
 });

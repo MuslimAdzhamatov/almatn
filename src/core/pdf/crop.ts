@@ -19,27 +19,37 @@ export interface PixelRect {
   height: number;
 }
 
+/**
+ * Фрагменты единиц → картинки: всё, что идёт подряд на одной странице, попадает в одну вырезку.
+ * Заголовок раздела перед первой строкой порции входит в неё, потому что лежит на той же странице выше.
+ */
 export function groupIntoSegments(boxes: readonly LineBox[]): CropSegment[] {
   const sorted = [...boxes].sort((a, b) => a.lineNumber - b.lineNumber);
   const segments: CropSegment[] = [];
   for (const box of sorted) {
-    const last = segments.at(-1);
-    if (last && last.page === box.page && last.lineEnd + 1 === box.lineNumber) {
-      last.lineEnd = box.lineNumber;
-      last.yTop = Math.min(last.yTop, box.yTop);
-      last.yBottom = Math.max(last.yBottom, box.yBottom);
-      last.xLeft = minNullable(last.xLeft, box.xLeft);
-      last.xRight = maxNullable(last.xRight, box.xRight);
-    } else {
-      segments.push({
-        page: box.page,
-        lineStart: box.lineNumber,
-        lineEnd: box.lineNumber,
-        yTop: box.yTop,
-        yBottom: box.yBottom,
-        xLeft: box.xLeft,
-        xRight: box.xRight,
-      });
+    for (const fragment of box.fragments) {
+      const last = segments.at(-1);
+      const continues =
+        last &&
+        last.page === fragment.page &&
+        (box.lineNumber === last.lineEnd || box.lineNumber === last.lineEnd + 1);
+      if (last && continues) {
+        last.lineEnd = box.lineNumber;
+        last.yTop = Math.min(last.yTop, fragment.yTop);
+        last.yBottom = Math.max(last.yBottom, fragment.yBottom);
+        last.xLeft = minNullable(last.xLeft, fragment.xLeft);
+        last.xRight = maxNullable(last.xRight, fragment.xRight);
+      } else {
+        segments.push({
+          page: fragment.page,
+          lineStart: box.lineNumber,
+          lineEnd: box.lineNumber,
+          yTop: fragment.yTop,
+          yBottom: fragment.yBottom,
+          xLeft: fragment.xLeft,
+          xRight: fragment.xRight,
+        });
+      }
     }
   }
   return segments;

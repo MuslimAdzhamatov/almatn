@@ -109,6 +109,10 @@ export interface TextsDeps {
 
 const PENDING_STEP = 'pending_choice';
 
+const UNIT_NAMES: readonly UnitName[] = ['lines', 'bayts', 'hadiths', 'paragraphs'];
+
+const isUnitName = (value: string): value is UnitName => UNIT_NAMES.includes(value as UnitName);
+
 export function titleFromFileName(fileName: string): string {
   // extname('.pdf') — пустая строка (Node считает это скрытым файлом), поэтому расширение режем явно.
   const base = basename(fileName)
@@ -367,7 +371,7 @@ export function createTexts({
     },
 
     async setUnit(userId: bigint, textId: number, unit: string): Promise<TextAction> {
-      if (unit !== 'lines' && unit !== 'bayts') return { kind: 'stale' };
+      if (!isUnitName(unit)) return { kind: 'stale' };
       const text = await ownText(userId, textId, 'awaiting_confirm');
       if (!text) return { kind: 'stale' };
       await store.update(textId, { unitName: unit });

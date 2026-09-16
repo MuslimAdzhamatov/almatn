@@ -18,9 +18,12 @@ export interface PageRaster {
   image: GrayImage;
 }
 
-export interface LineBox {
-  lineNumber: number;
-  printedNumber: number | null;
+/** Сам текст единицы или заголовок раздела перед ней. */
+export type FragmentKind = 'text' | 'heading';
+
+/** Что вырезать с одной страницы: у обычной строки фрагмент один, у абзаца на развороте — по одному на страницу. */
+export interface Fragment {
+  kind: FragmentKind;
   page: number;
   /** Границы вырезки в пунктах PDF. */
   yTop: number;
@@ -28,7 +31,26 @@ export interface LineBox {
   /** null — вся ширина страницы. */
   xLeft: number | null;
   xRight: number | null;
+}
+
+/** Единица заучивания: строка, бейт, хадис или абзац. */
+export interface LineBox {
+  lineNumber: number;
+  printedNumber: number | null;
+  /** Страница первого фрагмента. */
+  page: number;
   sectionBreakBefore: boolean;
+  fragments: Fragment[];
+}
+
+export function textFragment(
+  page: number,
+  yTop: number,
+  yBottom: number,
+  xLeft: number | null = null,
+  xRight: number | null = null,
+): Fragment {
+  return { kind: 'text', page, yTop, yBottom, xLeft, xRight };
 }
 
 /** Пиксель темнее этого значения считается «чернилами». */
@@ -200,10 +222,7 @@ function layoutPage(lines: NumberedLine[], raster: PageRaster, pitch: number): L
     lineNumber: line.lineNumber,
     printedNumber: line.printedNumber,
     page: line.page,
-    yTop: tops[i]! / scale,
-    yBottom: bottoms[i]! / scale,
-    xLeft,
-    xRight,
     sectionBreakBefore: breaks[i]!,
+    fragments: [textFragment(line.page, tops[i]! / scale, bottoms[i]! / scale, xLeft, xRight)],
   }));
 }

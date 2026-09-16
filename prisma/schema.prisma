@@ -20,14 +20,29 @@ enum NightPolicy {
 enum UnitName {
   lines // «строки»
   bayts // «бейты»
+  hadiths // «хадисы» — пронумерованные абзацы сборника хадисов
+  paragraphs // «абзацы» — прочая проза с номерами абзацев
 }
 
 enum ParseStrategy {
   numbers
   text_lines
   image_lines
+  paragraphs // пронумерованные абзацы: единица — абзац целиком
   manual_page
   manual_split
+}
+
+/** Из чего сделан текст: PDF или присланные картинки (страницы — файлы изображений). */
+enum SourceKind {
+  pdf
+  images
+}
+
+/** Вид фрагмента единицы: сам текст или заголовок раздела перед ним. */
+enum FragmentKind {
+  text
+  heading
 }
 
 enum TextStatus {
@@ -111,6 +126,7 @@ model User {
   texts      Text[]
   plans      Plan[]
   deliveries Delivery[]
+  uploads    UploadFile[]
 
   @@map("users")
 }
@@ -132,8 +148,9 @@ model Text {
   userId           BigInt
   title            String
   unitName         UnitName       @default(lines)
+  sourceKind       SourceKind     @default(pdf)
   originalFileName String
-  filePath         String
+  filePath         String // PDF — файл, картинки — каталог со страницами
   fileSize         Int
   sha256           String
   pageCount        Int
@@ -155,22 +172,58 @@ model Text {
   @@map("texts")
 }
 
+/// Единица заучивания: строка, бейт, хадис или абзац. Сам текст не хранится — только положение.
 model Line {
   id                 Int     @id @default(autoincrement())
   textId             Int
   lineNumber         Int // итоговый номер по порядку
   printedNumber      Int? // как напечатано в PDF
-  page               Int // с 1
-  yTop               Float // границы вырезки, пункты PDF
-  yBottom            Float
-  xLeft              Float? // null — ширина текстового блока страницы
-  xRight             Float?
+  page               Int // страница первого фрагмента, с 1
   sectionBreakBefore Boolean @default(false)
 
-  text Text @relation(fields: [textId], references: [id], onDelete: Cascade)
+  text      Text           @relation(fields: [textId], references: [id], onDelete: Cascade)
+  fragments LineFragment[]
 
   @@unique([textId, lineNumber])
   @@map("lines")
+}
+
+/// Что вырезать со страницы для одной единицы: обычно один фрагмент,
+/// у абзаца на нескольких страницах — по фрагменту на страницу, плюс заголовок раздела перед ней.
+model LineFragment {
+  id      Int          @id @default(autoincrement())
+  lineId  Int
+  seq     Int // порядок фрагментов внутри единицы, с 0
+  kind    FragmentKind @default(text)
+  page    Int
+  yTop    Float // границы вырезки в пунктах PDF (для картинок — в пикселях страницы)
+  yBottom Float
+  xLeft   Float? // null — вся ширина страницы
+  xRight  Float?
+
+  line Line @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@unique([lineId, seq])
+  @@map("line_fragments")
+}
+
+/// Присланный файл, который ещё не стал текстом: страницы альбома до кнопки «Готово»
+/// и файлы, пришедшие до конца настройки расписания. Хранится file_id, сам файл не скачан.
+model UploadFile {
+  id           Int      @id @default(autoincrement())
+  userId       BigInt
+  fileId       String // Telegram file_id
+  fileUniqueId String?
+  fileName     String
+  mimeType     String?
+  fileSize     Int?
+  mediaGroupId String? // альбом Telegram — страницы одного текста
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("upload_files")
 }
 
 model CropCache {

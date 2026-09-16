@@ -43,8 +43,10 @@ export interface DialogStore {
 
 export type TextStatus = 'parsing' | 'awaiting_confirm' | 'ready' | 'failed';
 export type ParseStrategy =
-  'numbers' | 'text_lines' | 'image_lines' | 'manual_page' | 'manual_split';
-export type UnitName = 'lines' | 'bayts';
+  'numbers' | 'text_lines' | 'image_lines' | 'paragraphs' | 'manual_page' | 'manual_split';
+export type UnitName = 'lines' | 'bayts' | 'hadiths' | 'paragraphs';
+/** PDF или текст из присланных картинок (страницы — файлы изображений). */
+export type SourceKind = 'pdf' | 'images';
 
 export interface ParseReport {
   firstPage: number;
@@ -59,7 +61,9 @@ export interface TextRecord {
   userId: bigint;
   title: string;
   unitName: UnitName;
+  sourceKind: SourceKind;
   originalFileName: string;
+  /** PDF — файл, картинки — каталог со страницами. */
   filePath: string;
   fileSize: number;
   sha256: string;

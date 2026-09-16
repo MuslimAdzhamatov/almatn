@@ -182,7 +182,7 @@ export const texts = {
 
     buttons: {
       confirm: '✅ Всё верно',
-      callAs: (unit: UnitName) => (unit === 'bayts' ? 'Называть «бейты»' : 'Называть «строки»'),
+      callAs: (unit: UnitName) => `Называть «${RANGE_LABELS[unit].toLowerCase()}»`,
       byPages: '📄 Разобрать постранично',
       byNumbers: '🔢 Разобрать по номерам строк',
       cancel: 'Отмена',
@@ -190,7 +190,7 @@ export const texts = {
       resumePending: (title: string) => `Продолжить с «${shorten(title, 32)}»`,
       replacePending: 'Удалить и загрузить новый',
     },
-    unitChanged: (unit: UnitName) => (unit === 'bayts' ? 'Теперь — «бейты»' : 'Теперь — «строки»'),
+    unitChanged: (unit: UnitName) => `Теперь — «${RANGE_LABELS[unit].toLowerCase()}»`,
     askTitle: (title: string) => `Как назвать текст? Напишите название или оставьте «${title}».`,
     invalidTitle: (maxLength: number) =>
       `Название должно быть от 1 до ${maxLength} символов. Напишите другое.`,
@@ -214,10 +214,24 @@ type UnitName = import('../../app/ports.js').UnitName;
 const NOUNS = {
   lines: ['строка', 'строки', 'строк'],
   bayts: ['бейт', 'бейта', 'бейтов'],
+  hadiths: ['хадис', 'хадиса', 'хадисов'],
+  paragraphs: ['абзац', 'абзаца', 'абзацев'],
   pages: ['страница', 'страницы', 'страниц'],
 } as const;
-const RANGE_LABELS = { lines: 'Строки', bayts: 'Бейты', pages: 'Страницы' } as const;
-const SINGLE_LABELS = { lines: 'Строка', bayts: 'Бейт', pages: 'Страница' } as const;
+const RANGE_LABELS = {
+  lines: 'Строки',
+  bayts: 'Бейты',
+  hadiths: 'Хадисы',
+  paragraphs: 'Абзацы',
+  pages: 'Страницы',
+} as const;
+const SINGLE_LABELS = {
+  lines: 'Строка',
+  bayts: 'Бейт',
+  hadiths: 'Хадис',
+  paragraphs: 'Абзац',
+  pages: 'Страница',
+} as const;
 
 /** Постраничный разбор — единица «страница», иначе — как выбрал пользователь. */
 const unitKind = (strategy: ParseStrategy, unitName: UnitName) =>
