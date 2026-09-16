@@ -158,6 +158,7 @@ model Text {
   parseStrategy    ParseStrategy?
   status           TextStatus     @default(parsing)
   parseReport      Json? // аномалии нумерации и т.п. — для сводки
+  parseRequest     Json? // выбор пользователя в сводке: стратегия, диапазон страниц, строк со страницы
   parseError       String?
   createdAt        DateTime       @default(now())
 

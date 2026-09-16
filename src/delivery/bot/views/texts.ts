@@ -1,5 +1,5 @@
 import { InlineKeyboard } from 'grammy';
-import type { UnitName } from '../../../app/ports.js';
+import type { ParseStrategy, UnitName } from '../../../app/ports.js';
 import type {
   IngestResult,
   LineImage,
@@ -21,7 +21,30 @@ export const textCallbacks = {
   keepTitle: 'txkeep',
   pending: 'txpend',
   images: 'tximg',
+  reparseMenu: 'txmenu',
+  reparseInput: 'txask',
 } as const;
+
+const STRATEGY_BUTTONS: readonly ParseStrategy[] = [
+  'numbers',
+  'text_lines',
+  'paragraphs',
+  'image_lines',
+  'manual_page',
+];
+
+/** Меню «Разобрать по-другому»: стратегии, диапазон страниц и нарезка полос. */
+export function reparseKeyboard(summary: TextSummary): InlineKeyboard {
+  const id = summary.textId;
+  const keyboard = new InlineKeyboard();
+  for (const strategy of STRATEGY_BUTTONS) {
+    if (strategy === summary.strategy) continue;
+    keyboard.text(t.buttons.strategy[strategy], `${textCallbacks.reparse}:${id}:${strategy}`).row();
+  }
+  keyboard.text(t.buttons.strategy.manual_split, `${textCallbacks.reparseInput}:${id}:lines`).row();
+  keyboard.text(t.buttons.pageRange, `${textCallbacks.reparseInput}:${id}:pages`).row();
+  return keyboard.text(t.buttons.back, `${textCallbacks.reparseMenu}:${id}:back`);
+}
 
 /** Кнопки под сообщением о собранных страницах-картинках. */
 export function imagesKeyboard(pages: number): InlineKeyboard {
@@ -138,10 +161,8 @@ export function parseSummaryKeyboard(summary: TextSummary): InlineKeyboard {
   if (summary.strategy !== 'manual_page' && summary.strategy !== 'manual_split') {
     const nextUnit = nextUnitName(summary);
     keyboard.text(t.buttons.callAs(nextUnit), `${textCallbacks.unit}:${id}:${nextUnit}`).row();
-    keyboard.text(t.buttons.byPages, `${textCallbacks.reparse}:${id}:manual_page`).row();
-  } else if (summary.report.fallbackReason !== 'no_text_layer') {
-    keyboard.text(t.buttons.byNumbers, `${textCallbacks.reparse}:${id}:auto`).row();
   }
+  keyboard.text(t.buttons.reparse, `${textCallbacks.reparseMenu}:${id}:open`).row();
   return keyboard.text(t.buttons.cancel, `${textCallbacks.cancel}:${id}`);
 }
 
@@ -166,6 +187,14 @@ export function actionMessage(action: ShownAction): RenderedMessage {
       };
     case 'reparsing':
       return { text: t.reparsing };
+    case 'ask_page_range':
+      return { text: t.askPageRange(action.pageCount) };
+    case 'ask_lines_per_page':
+      return { text: t.askLinesPerPage(action.max) };
+    case 'invalid_page_range':
+      return { text: t.invalidPageRange(action.pageCount) };
+    case 'invalid_lines_per_page':
+      return { text: t.invalidLinesPerPage(action.max) };
     case 'cancelled':
       return { text: t.cancelled };
     case 'invalid_title':

@@ -48,9 +48,15 @@ describe('parsePdf', () => {
       crop: async () => Buffer.alloc(0),
     };
 
-    const parsed = await parsePdf('/book.pdf', '/work', tools, 'auto', async (path) => {
-      discarded.push(path);
-    });
+    const parsed = await parsePdf(
+      '/book.pdf',
+      '/work',
+      tools,
+      { strategy: 'auto' },
+      async (path) => {
+        discarded.push(path);
+      },
+    );
 
     expect(parsed.strategy).toBe('numbers');
     expect(parsed.boxes.map((box) => box.lineNumber)).toEqual(

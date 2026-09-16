@@ -12,7 +12,7 @@ import type {
   TextsStore,
   UploadsStore,
 } from './ports.js';
-import { createTexts, titleFromFileName, type ParseEvent } from './texts.js';
+import { createTexts, parsePageRange, titleFromFileName, type ParseEvent } from './texts.js';
 
 const USER = 7n;
 const OTHER_USER = 8n;
@@ -64,6 +64,7 @@ function setup() {
         parseStrategy: null,
         status: 'parsing',
         parseReport: null,
+        parseRequest: null,
         parseError: null,
         createdAt: new Date(),
       };
@@ -675,6 +676,119 @@ describe('подтверждение разбора', () => {
     expect(removed).toContain('text:1');
     expect(getDialog()).toBeNull();
     expect(await service.cancel(USER, 1)).toEqual({ kind: 'stale' });
+  });
+});
+
+describe('parsePageRange', () => {
+  it.each([
+    ['3-240', { pageFrom: 3, pageTo: 240 }],
+    ['12', { pageFrom: 12, pageTo: 300 }],
+    [' 5 – 9 ', { pageFrom: 5, pageTo: 9 }],
+    ['7-7', { pageFrom: 7, pageTo: 7 }],
+  ])('«%s» разбирается', (input, expected) => {
+    expect(parsePageRange(input, 300)).toEqual(expected);
+  });
+
+  it.each([['0-5'], ['9-3'], ['3-999'], ['до конца'], [''], ['3,5']])(
+    '«%s» — не диапазон',
+    (input) => {
+      expect(parsePageRange(input, 300)).toBeNull();
+    },
+  );
+});
+
+describe('«Разобрать по-другому»', () => {
+  it('«N строк со страницы»: спрашивает число и режет страницы на полосы', async () => {
+    const { upload, service, texts, getDialog } = setup();
+    await upload();
+
+    expect(await service.askReparseInput(USER, 1, 'lines')).toEqual({
+      kind: 'ask_lines_per_page',
+      textId: 1,
+      max: 30,
+    });
+    expect(getDialog()).toMatchObject({
+      step: 'reparse_input',
+      data: { textId: 1, field: 'lines' },
+    });
+
+    expect(await service.handleReparseText(USER, '40')).toEqual({
+      kind: 'invalid_lines_per_page',
+      textId: 1,
+      max: 30,
+    });
+    expect(await service.handleReparseText(USER, '3')).toEqual({ kind: 'reparsing', textId: 1 });
+    await service.idle();
+
+    expect(texts.get(1)).toMatchObject({
+      parseStrategy: 'manual_split',
+      parseRequest: { strategy: 'manual_split', linesPerPage: 3 },
+      // Две страницы по три полосы.
+      totalLines: 6,
+    });
+    expect(getDialog()).toBeNull();
+  });
+
+  it('диапазон страниц запоминается и применяется при разборе', async () => {
+    const { upload, service, texts } = setup();
+    await upload();
+
+    expect(await service.askReparseInput(USER, 1, 'pages')).toEqual({
+      kind: 'ask_page_range',
+      textId: 1,
+      pageCount: 2,
+    });
+    expect(await service.handleReparseText(USER, '5-9')).toEqual({
+      kind: 'invalid_page_range',
+      textId: 1,
+      pageCount: 2,
+    });
+
+    expect(await service.handleReparseText(USER, '1-1')).toEqual({ kind: 'reparsing', textId: 1 });
+    await service.idle();
+    expect(texts.get(1)).toMatchObject({
+      parseRequest: { strategy: 'auto', pageFrom: 1, pageTo: 1 },
+      parseStrategy: 'numbers',
+      totalLines: 8,
+    });
+  });
+
+  it('смена стратегии сохраняет выбранный диапазон страниц', async () => {
+    const { upload, service, texts } = setup();
+    await upload();
+    await service.handleReparseText(USER, '1-1').catch(() => undefined);
+    await service.askReparseInput(USER, 1, 'pages');
+    await service.handleReparseText(USER, '1-1');
+    await service.idle();
+
+    expect(await service.reparse(USER, 1, 'manual_page')).toEqual({ kind: 'reparsing', textId: 1 });
+    await service.idle();
+    expect(texts.get(1)).toMatchObject({
+      parseStrategy: 'manual_page',
+      parseRequest: { strategy: 'manual_page', pageFrom: 1, pageTo: 1 },
+      totalLines: 1,
+    });
+  });
+
+  it('выбранный способ разбора переживает перезапуск', async () => {
+    const { upload, service, texts } = setup();
+    await upload();
+    await service.reparse(USER, 1, 'manual_split', { linesPerPage: 4 });
+    await service.idle();
+    expect(texts.get(1)?.totalLines).toBe(8);
+
+    texts.get(1)!.status = 'parsing';
+    await service.resumeParsing();
+    await service.idle();
+    expect(texts.get(1)).toMatchObject({ parseStrategy: 'manual_split', totalLines: 8 });
+  });
+
+  it('чужие и неизвестные стратегии не принимаются', async () => {
+    const { upload, service } = setup();
+    await upload();
+    expect(await service.reparse(USER, 1, 'ocr')).toEqual({ kind: 'stale' });
+    expect(await service.reparse(OTHER_USER, 1, 'manual_page')).toEqual({ kind: 'stale' });
+    expect(await service.askReparseInput(USER, 1, 'colour')).toEqual({ kind: 'stale' });
   });
 });
 

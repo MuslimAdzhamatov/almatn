@@ -48,6 +48,19 @@ export type UnitName = 'lines' | 'bayts' | 'hadiths' | 'paragraphs';
 /** PDF или текст из присланных картинок (страницы — файлы изображений). */
 export type SourceKind = 'pdf' | 'images';
 
+/**
+ * Чем и как разбирать текст — выбор пользователя в сводке («Разобрать по-другому»).
+ * Хранится у текста, поэтому переразбор повторяется и после перезапуска бота.
+ */
+export interface ParseRequest {
+  strategy: 'auto' | ParseStrategy;
+  /** Для `manual_split` — сколько равных полос резать со страницы. */
+  linesPerPage?: number;
+  /** Диапазон страниц, обе границы включительно (с 1); не задан — весь файл. */
+  pageFrom?: number;
+  pageTo?: number;
+}
+
 export interface ParseReport {
   firstPage: number;
   lastPage: number;
@@ -72,6 +85,7 @@ export interface TextRecord {
   parseStrategy: ParseStrategy | null;
   status: TextStatus;
   parseReport: ParseReport | null;
+  parseRequest: ParseRequest | null;
   parseError: string | null;
   createdAt: Date;
 }
@@ -91,6 +105,7 @@ export type TextPatch = Partial<
     | 'parseStrategy'
     | 'status'
     | 'parseReport'
+    | 'parseRequest'
     | 'parseError'
   >
 >;

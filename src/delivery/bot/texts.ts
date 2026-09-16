@@ -200,8 +200,33 @@ export const texts = {
     previewPage: 'Ниже — первая страница так, как её будет присылать бот.',
     confirmPrompt: 'Всё разобрано верно?',
 
+    reparseMenu: (firstPage: number, lastPage: number, pageCount: number) =>
+      [
+        `Сейчас разобраны страницы ${firstPage}–${lastPage} из ${pageCount}.`,
+        '',
+        'Как разобрать текст?',
+      ].join('\n'),
+    askPageRange: (pageCount: number) =>
+      `Какие страницы разбирать? Напишите диапазон, например 3-${pageCount}, или одно число — с него до конца.`,
+    invalidPageRange: (pageCount: number) =>
+      `Не понял диапазон. Напишите два числа через дефис в пределах 1–${pageCount}, например 3-${pageCount}.`,
+    askLinesPerPage: (max: number) =>
+      `Сколько строк резать со страницы? Напишите число от 1 до ${max} — страница поделится на равные полосы.`,
+    invalidLinesPerPage: (max: number) => `Напишите число от 1 до ${max}.`,
+
     buttons: {
       confirm: '✅ Всё верно',
+      reparse: '⚙️ Разобрать по-другому',
+      strategy: {
+        numbers: '🔢 По номерам строк',
+        text_lines: '📝 По строкам текста',
+        image_lines: '🖼 По строкам на картинке',
+        paragraphs: '¶ По абзацам',
+        manual_page: '📄 Постранично',
+        manual_split: '✂️ N строк со страницы…',
+      },
+      pageRange: '📑 Выбрать страницы…',
+      back: '← Назад',
       callAs: (unit: UnitName) => `Называть «${RANGE_LABELS[unit].toLowerCase()}»`,
       byPages: '📄 Разобрать постранично',
       byNumbers: '🔢 Разобрать по номерам строк',

@@ -4,11 +4,12 @@ import { BYTES_IN_MB, limits } from '../config/limits.js';
 import { groupIntoSegments, segmentPixelRect } from '../core/pdf/crop.js';
 import type { LineBox } from '../core/pdf/layout.js';
 import { PdfToolError } from '../core/pdf/poppler.js';
-import { parseImagePages, parsePdf, type ParseMode } from './parsing.js';
+import { AUTO, parseImagePages, parsePdf } from './parsing.js';
 import type {
   DialogStore,
   FileStore,
   ParseReport,
+  ParseRequest,
   ParseStrategy,
   PdfTools,
   PendingUpload,
@@ -92,6 +93,10 @@ export type TextAction =
     }
   | { kind: 'unit_changed'; summary: TextSummary }
   | { kind: 'reparsing'; textId: number }
+  | { kind: 'ask_page_range'; textId: number; pageCount: number }
+  | { kind: 'ask_lines_per_page'; textId: number; max: number }
+  | { kind: 'invalid_page_range'; textId: number; pageCount: number }
+  | { kind: 'invalid_lines_per_page'; textId: number; max: number }
   | { kind: 'cancelled' }
   | { kind: 'invalid_title'; maxLength: number }
   | { kind: 'stale' };
@@ -120,7 +125,35 @@ export interface TextsDeps {
 const PENDING_STEP = 'pending_choice';
 const IMAGES_STEP = 'images';
 
+const REPARSE_STEP = 'reparse_input';
+
 const UNIT_NAMES: readonly UnitName[] = ['lines', 'bayts', 'hadiths', 'paragraphs'];
+
+const REQUESTED_STRATEGIES: readonly ParseRequest['strategy'][] = [
+  'auto',
+  'numbers',
+  'text_lines',
+  'image_lines',
+  'paragraphs',
+  'manual_page',
+  'manual_split',
+];
+
+const isRequestedStrategy = (value: string): value is ParseRequest['strategy'] =>
+  REQUESTED_STRATEGIES.includes(value as ParseRequest['strategy']);
+
+/** «3-240», «12-12» или «12» (с этой страницы до конца). */
+export function parsePageRange(
+  input: string,
+  pageCount: number,
+): { pageFrom: number; pageTo: number } | null {
+  const match = /^\s*(\d{1,4})\s*(?:[-–—]\s*(\d{1,4})\s*)?$/.exec(input);
+  if (!match) return null;
+  const pageFrom = Number(match[1]);
+  const pageTo = match[2] === undefined ? pageCount : Number(match[2]);
+  if (pageFrom < 1 || pageTo > pageCount || pageFrom > pageTo) return null;
+  return { pageFrom, pageTo };
+}
 
 const isUnitName = (value: string): value is UnitName => UNIT_NAMES.includes(value as UnitName);
 
@@ -174,17 +207,19 @@ export function createTexts({
     await files.removeText(text.id);
   }
 
-  async function runParse(textId: number, mode: ParseMode) {
+  async function runParse(textId: number) {
     const text = await store.get(textId);
     if (!text || text.status !== 'parsing') return;
     const workDir = await files.workDir(textId);
+    // Запрос хранится у текста, поэтому переразбор повторится и после перезапуска бота.
+    const request = text.parseRequest ?? AUTO;
     try {
       // У текста из картинок страница — сам файл, рендерить нечего.
       const parsed =
         text.sourceKind === 'images'
-          ? await parseImagePages(await files.listImagePages(textId), tools)
-          : await parsePdf(text.filePath, workDir, tools, mode, files.removeFile);
-      if (!parsed) throw new PdfToolError('Не удалось найти строки на картинках', 'damaged');
+          ? await parseImagePages(await files.listImagePages(textId), tools, request)
+          : await parsePdf(text.filePath, workDir, tools, request, files.removeFile);
+      if (!parsed) throw new PdfToolError('Не удалось разобрать этим способом', 'damaged');
       await store.replaceLines(textId, parsed.boxes);
       await store.update(textId, {
         status: 'awaiting_confirm',
@@ -207,8 +242,8 @@ export function createTexts({
     }
   }
 
-  function enqueue(textId: number, mode: ParseMode) {
-    queue.push(() => runParse(textId, mode).catch((err: unknown) => reportError(err, { textId })));
+  function enqueue(textId: number) {
+    queue.push(() => runParse(textId).catch((err: unknown) => reportError(err, { textId })));
   }
 
   async function ownText(userId: bigint, textId: number, status: TextStatus) {
@@ -412,7 +447,7 @@ export function createTexts({
       await uploads.clear(input.userId);
       const dialog = await dialogs.get(input.userId);
       if (dialog?.flow === FLOW && dialog.step === IMAGES_STEP) await dialogs.clear(input.userId);
-      enqueue(text.id, 'auto');
+      enqueue(text.id);
       return { kind: 'accepted', textId: text.id, queued: queue.pending };
     },
 
@@ -489,13 +524,13 @@ export function createTexts({
         pageCount: pages,
       });
       await store.update(text.id, { filePath: await files.adoptSource(input.tempPath, text.id) });
-      enqueue(text.id, 'auto');
+      enqueue(text.id);
       return { kind: 'accepted', textId: text.id, queued: queue.pending };
     },
 
     /** При старте бота: разборы, прерванные перезапуском, запускаются заново. */
     async resumeParsing() {
-      for (const text of await store.listByStatus('parsing')) enqueue(text.id, 'auto');
+      for (const text of await store.listByStatus('parsing')) enqueue(text.id);
     },
 
     async summary(textId: number): Promise<TextSummary | null> {
@@ -526,13 +561,68 @@ export function createTexts({
       return summary ? { kind: 'unit_changed', summary } : { kind: 'stale' };
     },
 
-    async reparse(userId: bigint, textId: number, mode: string): Promise<TextAction> {
-      if (mode !== 'auto' && mode !== 'manual_page') return { kind: 'stale' };
+    /** «Разобрать по-другому»: стратегия и диапазон страниц из сводки. */
+    async reparse(
+      userId: bigint,
+      textId: number,
+      strategy: string,
+      extra: Omit<ParseRequest, 'strategy'> = {},
+    ): Promise<TextAction> {
+      if (!isRequestedStrategy(strategy)) return { kind: 'stale' };
       const text = await ownText(userId, textId, 'awaiting_confirm');
       if (!text) return { kind: 'stale' };
-      await store.update(textId, { status: 'parsing' });
-      enqueue(textId, mode);
+      // Диапазон страниц сохраняется при смене стратегии, если не задан новый.
+      const previous: Partial<ParseRequest> = text.parseRequest ?? {};
+      const request: ParseRequest = {
+        strategy,
+        ...(previous.linesPerPage !== undefined && { linesPerPage: previous.linesPerPage }),
+        ...(previous.pageFrom !== undefined && { pageFrom: previous.pageFrom }),
+        ...(previous.pageTo !== undefined && { pageTo: previous.pageTo }),
+        ...extra,
+      };
+      await store.update(textId, { status: 'parsing', parseRequest: request });
+      await dialogs.clear(userId);
+      enqueue(textId);
       return { kind: 'reparsing', textId };
+    },
+
+    /** Шаг ввода: диапазон страниц или сколько полос резать со страницы. */
+    async askReparseInput(userId: bigint, textId: number, field: string): Promise<TextAction> {
+      if (field !== 'pages' && field !== 'lines') return { kind: 'stale' };
+      const text = await ownText(userId, textId, 'awaiting_confirm');
+      if (!text) return { kind: 'stale' };
+      await dialogs.set(userId, { flow: FLOW, step: REPARSE_STEP, data: { textId, field } });
+      return field === 'pages'
+        ? { kind: 'ask_page_range', textId, pageCount: text.pageCount }
+        : { kind: 'ask_lines_per_page', textId, max: limits.pdf.maxLinesPerPage };
+    },
+
+    /** Текст сообщения на шаге ввода; null — пользователь не на этом шаге. */
+    async handleReparseText(userId: bigint, input: string): Promise<TextAction | null> {
+      const dialog = await dialogs.get(userId);
+      if (dialog?.flow !== FLOW || dialog.step !== REPARSE_STEP) return null;
+      const text = await ownText(userId, Number(dialog.data.textId), 'awaiting_confirm');
+      if (!text) {
+        await dialogs.clear(userId);
+        return { kind: 'stale' };
+      }
+
+      if (dialog.data.field === 'lines') {
+        const perPage = Number(input.trim());
+        if (!Number.isInteger(perPage) || perPage < 1 || perPage > limits.pdf.maxLinesPerPage) {
+          return {
+            kind: 'invalid_lines_per_page',
+            textId: text.id,
+            max: limits.pdf.maxLinesPerPage,
+          };
+        }
+        return this.reparse(userId, text.id, 'manual_split', { linesPerPage: perPage });
+      }
+
+      const range = parsePageRange(input, text.pageCount);
+      if (!range) return { kind: 'invalid_page_range', textId: text.id, pageCount: text.pageCount };
+      const strategy = text.parseRequest?.strategy ?? 'auto';
+      return this.reparse(userId, text.id, strategy, range);
     },
 
     async cancel(userId: bigint, textId: number): Promise<TextAction> {

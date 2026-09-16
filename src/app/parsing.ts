@@ -1,6 +1,5 @@
-import { limits } from '../config/limits.js';
-import { pageChunks } from '../core/pdf/chunks.js';
 import type { PdfPageWords } from '../core/pdf/bbox.js';
+import { pageChunks } from '../core/pdf/chunks.js';
 import {
   dropRunningBands,
   imageLinesDefaults,
@@ -13,19 +12,24 @@ import {
   type PageBands,
 } from '../core/pdf/imagelines.js';
 import { inkPerRow, layoutNumberedLines, type LineBox } from '../core/pdf/layout.js';
+import { pagesAsSlices, pagesAsUnits, type PageSize } from '../core/pdf/manual.js';
+import {
+  detectNumberedLines,
+  estimatePitch,
+  type NumberedLine,
+  type NumberingAnomaly,
+} from '../core/pdf/numbers.js';
 import { dropFootnotes, paragraphsToBoxes } from '../core/pdf/paragraphs.js';
-import { pagesAsUnits } from '../core/pdf/manual.js';
-import { detectNumberedLines, estimatePitch, type NumberedLine } from '../core/pdf/numbers.js';
 import { PdfToolError } from '../core/pdf/poppler.js';
-import type { NumberingAnomaly } from '../core/pdf/numbers.js';
 import { attachHeadings, detectTextLines, type TextLine } from '../core/pdf/textlines.js';
-import type { ParseReport, ParseStrategy, PdfTools } from './ports.js';
+import { limits } from '../config/limits.js';
+import type { ParseReport, ParseRequest, ParseStrategy, PdfTools } from './ports.js';
 
-// Разбор PDF на единицы заучивания (CLAUDE.md, раздел 4.1): по напечатанным номерам,
-// иначе по строкам текстового слоя, иначе постранично. Разбор сканов по изображению — шаг 3b.3.
+// Разбор на единицы заучивания (CLAUDE.md, раздел 4.1). Порядок при `strategy = auto`:
+// номера строк → строки текстового слоя → абзацы по изображению → строки по изображению →
+// постранично. Пользователь может задать стратегию и диапазон страниц сам («Разобрать по-другому»).
 
-/** auto — по номерам или по строкам текста; manual_page — страница целиком. */
-export type ParseMode = 'auto' | 'manual_page';
+export const AUTO: ParseRequest = { strategy: 'auto' };
 
 export interface ParsedPdf {
   strategy: ParseStrategy;
@@ -47,35 +51,46 @@ interface ParsePlan {
   anomalies: NumberingAnomaly[];
 }
 
+interface Scanned {
+  page: number;
+  width: number;
+  height: number;
+  widthPt: number;
+  heightPt: number;
+  rows: Uint32Array;
+  bands: InkBand[];
+}
+
 export async function parsePdf(
   file: string,
   workDir: string,
   tools: PdfTools,
-  mode: ParseMode = 'auto',
+  request: ParseRequest = AUTO,
   /** Удаление отрендеренной для анализа страницы — после обработки её части. */
   discard: (path: string) => Promise<void> = async () => undefined,
 ): Promise<ParsedPdf> {
-  const pages = await tools.words(file);
-  if (pages.length === 0) throw new PdfToolError('В PDF нет страниц', 'damaged');
+  const all = await tools.words(file);
+  if (all.length === 0) throw new PdfToolError('В PDF нет страниц', 'damaged');
+  const pages = selectPages(all, request);
+  if (pages.length === 0) throw new PdfToolError('В выбранном диапазоне нет страниц', 'damaged');
 
-  const plan = mode === 'auto' ? planUnits(pages) : null;
+  const sizes = pages.map((page) => ({
+    page: page.page,
+    widthPt: page.width,
+    heightPt: page.height,
+  }));
+  if (request.strategy === 'manual_page' || request.strategy === 'manual_split') {
+    return manualParse(sizes, request);
+  }
+
+  const plan = planUnits(pages, request.strategy);
   if (!plan) {
     // Ни номеров, ни пригодного текстового слоя — скан: строки ищутся по изображению страниц.
-    if (mode === 'auto') {
-      const byImage = await parseByImage(file, workDir, tools, pages, discard);
+    if (request.strategy !== 'text_lines' && request.strategy !== 'numbers') {
+      const byImage = await parseByImage(file, workDir, tools, pages, discard, request.strategy);
       if (byImage) return byImage;
     }
-    const sizes = pages.map((p) => ({ page: p.page, widthPt: p.width, heightPt: p.height }));
-    return {
-      strategy: 'manual_page',
-      boxes: pagesAsUnits(sizes),
-      report: {
-        firstPage: 1,
-        lastPage: pages.length,
-        anomalies: [],
-        ...(mode === 'auto' && { fallbackReason: 'no_text_layer' as const }),
-      },
-    };
+    return manualParse(sizes, request, request.strategy === 'auto');
   }
 
   // Страницы анализируются по одной, чтобы не держать в памяти изображения всего документа,
@@ -101,7 +116,7 @@ export async function parsePdf(
     try {
       for (const page of chunkPages) {
         const path = rendered.get(page);
-        const size = pages[page - 1];
+        const size = all[page - 1];
         if (!path || !size) throw new PdfToolError(`Страница ${page} не отрендерилась`, 'damaged');
         const raster = {
           page,
@@ -134,30 +149,92 @@ export async function parsePdf(
 }
 
 /**
- * Разбор по изображению: страницы рендерятся частями, от каждой остаются только профиль
- * тёмных пикселей и полосы (несколько килобайт на страницу), сами картинки сразу удаляются.
- * Обычная высота и ширина строки считаются по всему документу, поэтому классификация полос
- * идёт вторым проходом — уже без изображений.
+ * Разбор текста из присланных картинок: страница — сам файл, рендерить нечего.
+ * Координаты хранятся в пикселях страницы (масштаб 1), поэтому вырезка работает так же, как у PDF.
  */
-interface Scanned {
-  page: number;
-  width: number;
-  height: number;
-  widthPt: number;
-  heightPt: number;
-  rows: Uint32Array;
-  bands: InkBand[];
+export async function parseImagePages(
+  paths: readonly string[],
+  tools: Pick<PdfTools, 'loadGray'>,
+  request: ParseRequest = AUTO,
+): Promise<ParsedPdf | null> {
+  const scanned: Scanned[] = [];
+  const sizes: PageSize[] = [];
+  for (const [index, path] of paths.entries()) {
+    const page = index + 1;
+    if (!inRange(page, request)) continue;
+    const image = await tools.loadGray(path);
+    const rows = inkPerRow(image);
+    scanned.push({
+      page,
+      width: image.width,
+      height: image.height,
+      widthPt: image.width,
+      heightPt: image.height,
+      rows,
+      bands: inkBands(image, rows),
+    });
+    sizes.push({ page, widthPt: image.width, heightPt: image.height });
+  }
+  if (scanned.length === 0) return null;
+
+  if (request.strategy === 'manual_page' || request.strategy === 'manual_split') {
+    return manualParse(sizes, request);
+  }
+  const parsed = buildImageParse(scanned, request.strategy);
+  if (parsed) return parsed;
+  return request.strategy === 'auto' ? manualParse(sizes, request, true) : null;
 }
 
+/** Страницы выбранного диапазона; без диапазона — весь файл. */
+function selectPages(pages: readonly PdfPageWords[], request: ParseRequest): PdfPageWords[] {
+  return pages.filter((page) => inRange(page.page, request));
+}
+
+const inRange = (page: number, request: ParseRequest) =>
+  page >= (request.pageFrom ?? 1) && page <= (request.pageTo ?? Number.MAX_SAFE_INTEGER);
+
+/** Ручной режим: страница целиком или N равных полос со страницы. */
+function manualParse(
+  sizes: readonly PageSize[],
+  request: ParseRequest,
+  fallback = false,
+): ParsedPdf {
+  const split = request.strategy === 'manual_split';
+  const boxes = split ? pagesAsSlices(sizes, request.linesPerPage ?? 1) : pagesAsUnits(sizes);
+  return {
+    strategy: split ? 'manual_split' : 'manual_page',
+    boxes,
+    report: {
+      firstPage: sizes[0]!.page,
+      lastPage: sizes.at(-1)!.page,
+      anomalies: [],
+      ...(fallback && { fallbackReason: 'no_text_layer' as const }),
+    },
+  };
+}
+
+/**
+ * Разбор по изображению: страницы рендерятся частями, от каждой остаются только профиль
+ * тёмных пикселей и полосы (несколько килобайт на страницу), сами картинки сразу удаляются.
+ */
 async function parseByImage(
   file: string,
   workDir: string,
   tools: PdfTools,
   pages: readonly PdfPageWords[],
   discard: (path: string) => Promise<void>,
+  strategy: ParseRequest['strategy'],
 ): Promise<ParsedPdf | null> {
+  const wanted = new Set(pages.map((page) => page.page));
+  const firstWanted = pages[0]!.page;
+  const lastWanted = pages.at(-1)!.page;
+
   const scanned: Scanned[] = [];
-  for (const [firstPage, lastPage] of pageChunks(1, pages.length, limits.pdf.renderChunkPages)) {
+  for (const [firstPage, lastPage] of pageChunks(
+    firstWanted,
+    lastWanted,
+    limits.pdf.renderChunkPages,
+  )) {
     const rendered = await tools.render(file, {
       outDir: workDir,
       dpi: limits.pdf.analysisDpi,
@@ -168,8 +245,8 @@ async function parseByImage(
     try {
       for (let page = firstPage; page <= lastPage; page++) {
         const path = rendered.get(page);
-        const size = pages[page - 1];
-        if (!path || !size) continue;
+        const size = pages.find((item) => item.page === page);
+        if (!path || !size || !wanted.has(page)) continue;
         const image = await tools.loadGray(path);
         const rows = inkPerRow(image);
         scanned.push({
@@ -187,39 +264,17 @@ async function parseByImage(
     }
   }
 
-  return buildImageParse(scanned);
-}
-
-/**
- * Разбор текста из присланных картинок: страница — сам файл, рендерить нечего.
- * Координаты хранятся в пикселях страницы (масштаб 1), поэтому вырезка работает так же, как у PDF.
- */
-export async function parseImagePages(
-  paths: readonly string[],
-  tools: Pick<PdfTools, 'loadGray'>,
-): Promise<ParsedPdf | null> {
-  const scanned: Scanned[] = [];
-  for (const [index, path] of paths.entries()) {
-    const image = await tools.loadGray(path);
-    const rows = inkPerRow(image);
-    scanned.push({
-      page: index + 1,
-      width: image.width,
-      height: image.height,
-      widthPt: image.width,
-      heightPt: image.height,
-      rows,
-      bands: inkBands(image, rows),
-    });
-  }
-  return buildImageParse(scanned);
+  return buildImageParse(scanned, strategy);
 }
 
 /**
  * Общая часть разбора по изображению: обычная строка, классификация полос, единицы.
- * Сначала пробуем абзацы (проза: хадисы), потом строки (стихи и сканы поэзии).
+ * При `auto` сначала пробуем абзацы (проза: хадисы), потом строки (стихи и сканы поэзии).
  */
-function buildImageParse(scanned: readonly Scanned[]): ParsedPdf | null {
+function buildImageParse(
+  scanned: readonly Scanned[],
+  strategy: ParseRequest['strategy'],
+): ParsedPdf | null {
   const bands = scanned.flatMap((page) => page.bands);
   const height = typicalHeight(bands, imageLinesDefaults.minHeightShare);
   if (height <= 0) return null;
@@ -233,11 +288,13 @@ function buildImageParse(scanned: readonly Scanned[]): ParsedPdf | null {
     heightPt: page.heightPt,
     bands: refineBands(page.bands, page.rows, { height, width, imageWidth: page.width }),
   }));
-
   const cleaned = dropRunningBands(classified, height);
 
-  const paragraphs = paragraphsToBoxes(dropFootnotes(cleaned));
-  if (paragraphs) return imageResult('paragraphs', paragraphs);
+  if (strategy === 'auto' || strategy === 'paragraphs') {
+    const paragraphs = paragraphsToBoxes(dropFootnotes(cleaned));
+    if (paragraphs) return imageResult('paragraphs', paragraphs);
+    if (strategy === 'paragraphs') return null;
+  }
 
   const boxes = imageLinesToBoxes(cleaned);
   if (boxes.length < imageLinesDefaults.minLines) return null;
@@ -252,18 +309,25 @@ function imageResult(strategy: ParseStrategy, boxes: LineBox[]): ParsedPdf {
   };
 }
 
-/** Какой стратегией разбирать и какие полосы размечать. */
-function planUnits(pages: readonly PdfPageWords[]): ParsePlan | null {
-  const numbered = detectNumberedLines(pages);
-  if (numbered) {
-    return {
-      strategy: 'numbers',
-      units: numbered.lines.map((line) => ({ line, heading: false })),
-      firstPage: numbered.firstPage,
-      lastPage: numbered.lastPage,
-      anomalies: numbered.anomalies,
-    };
+/** Какой стратегией разбирать текстовый слой и какие полосы размечать. */
+function planUnits(
+  pages: readonly PdfPageWords[],
+  strategy: ParseRequest['strategy'],
+): ParsePlan | null {
+  if (strategy === 'auto' || strategy === 'numbers') {
+    const numbered = detectNumberedLines(pages);
+    if (numbered) {
+      return {
+        strategy: 'numbers',
+        units: numbered.lines.map((line) => ({ line, heading: false })),
+        firstPage: numbered.firstPage,
+        lastPage: numbered.lastPage,
+        anomalies: numbered.anomalies,
+      };
+    }
+    if (strategy === 'numbers') return null;
   }
+  if (strategy !== 'auto' && strategy !== 'text_lines') return null;
 
   const text = detectTextLines(pages);
   if (!text) return null;

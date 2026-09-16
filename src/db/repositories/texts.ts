@@ -1,11 +1,15 @@
-import type { ParseReport, TextRecord, TextsStore } from '../../app/ports.js';
+import type { ParseReport, ParseRequest, TextRecord, TextsStore } from '../../app/ports.js';
 import type { LineBox } from '../../core/pdf/layout.js';
 import { Prisma, type Line, type LineFragment, type Text } from '../../generated/prisma/client.js';
 import type { Db } from '../client.js';
 
 function toRecord(row: Text): TextRecord {
-  // parseReport записывает только сам бот (app/texts), поэтому доверяем форме JSON.
-  return { ...row, parseReport: (row.parseReport as unknown as ParseReport | null) ?? null };
+  // parseReport и parseRequest записывает только сам бот (app/texts), поэтому доверяем форме JSON.
+  return {
+    ...row,
+    parseReport: (row.parseReport as unknown as ParseReport | null) ?? null,
+    parseRequest: (row.parseRequest as unknown as ParseRequest | null) ?? null,
+  };
 }
 
 function toBox(row: Line & { fragments: LineFragment[] }): LineBox {
@@ -45,17 +49,15 @@ export function createTextsRepository(db: Db): TextsStore {
       return row ? toRecord(row) : null;
     },
 
-    async update(textId, { parseReport, ...patch }) {
+    async update(textId, { parseReport, parseRequest, ...patch }) {
+      const json = (value: object | null) =>
+        value === null ? Prisma.DbNull : (value as unknown as Prisma.InputJsonObject);
       await db.text.update({
         where: { id: textId },
         data: {
           ...patch,
-          ...(parseReport !== undefined && {
-            parseReport:
-              parseReport === null
-                ? Prisma.DbNull
-                : (parseReport as unknown as Prisma.InputJsonObject),
-          }),
+          ...(parseReport !== undefined && { parseReport: json(parseReport) }),
+          ...(parseRequest !== undefined && { parseRequest: json(parseRequest) }),
         },
       });
     },

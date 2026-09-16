@@ -21,6 +21,7 @@ import {
   parseFailedText,
   parseSummaryKeyboard,
   pendingQuestion,
+  reparseKeyboard,
   summaryText,
   textCallbacks,
   uploadCheckText,
@@ -306,6 +307,37 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): Te
     );
   });
 
+  // Меню «Разобрать по-другому» и возврат из него к подтверждению.
+  bot.callbackQuery(new RegExp(`^${textCallbacks.reparseMenu}:(\\d+):(\\w+)$`), async (ctx) => {
+    const summary = await deps.texts.summary(matchedId(ctx));
+    if (!summary) {
+      await ctx.answerCallbackQuery({ text: texts.upload.stale });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    const back = matchedArg(ctx) === 'back';
+    await editOrReply(
+      ctx,
+      back
+        ? texts.upload.confirmPrompt
+        : texts.upload.reparseMenu(
+            summary.report.firstPage,
+            summary.report.lastPage,
+            summary.pageCount,
+          ),
+      back ? parseSummaryKeyboard(summary) : reparseKeyboard(summary),
+    );
+  });
+
+  // Ввод диапазона страниц или числа полос со страницы.
+  bot.callbackQuery(new RegExp(`^${textCallbacks.reparseInput}:(\\d+):(\\w+)$`), async (ctx) => {
+    await showAction(
+      ctx,
+      await deps.texts.askReparseInput(ctx.user.id, matchedId(ctx), matchedArg(ctx)),
+      true,
+    );
+  });
+
   bot.callbackQuery(new RegExp(`^${textCallbacks.cancel}:(\\d+)$`), async (ctx) => {
     await showAction(ctx, await deps.texts.cancel(ctx.user.id, matchedId(ctx)), true);
   });
@@ -314,9 +346,14 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): Te
     await showAction(ctx, await deps.texts.keepTitle(ctx.user.id, matchedId(ctx)), true);
   });
 
-  // Название текста на шаге после «Всё верно».
+  // Ответ текстом: диапазон страниц и число полос со страницы, затем название после «Всё верно».
   bot.on('message:text', async (ctx, next) => {
     if (ctx.message.text.startsWith('/')) return next();
+    const reparse = await deps.texts.handleReparseText(ctx.user.id, ctx.message.text);
+    if (reparse) {
+      await showAction(ctx, reparse, false);
+      return;
+    }
     const action = await deps.texts.handleTitleText(ctx.user.id, ctx.message.text);
     if (!action) return next();
     await showAction(ctx, action, false);
