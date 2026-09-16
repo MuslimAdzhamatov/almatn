@@ -41,6 +41,20 @@ export function createFileStorage(dataDir: string): FileStore {
       return target;
     },
 
+    imagesDir: (textId) => ensure(join(textDir(textId), 'source')),
+
+    async adoptImagePage(tempPath, textId, page, extension) {
+      const dir = await ensure(join(textDir(textId), 'source'));
+      const target = join(dir, `${String(page).padStart(3, '0')}${extension}`);
+      await rename(tempPath, target);
+      return target;
+    },
+
+    async listImagePages(textId) {
+      const dir = join(textDir(textId), 'source');
+      return (await listDir(dir)).sort().map((name) => join(dir, name));
+    },
+
     pagesDir: (textId) => ensure(join(textDir(textId), 'pages')),
 
     workDir: (textId) => ensure(join(textDir(textId), `${WORK_DIR_PREFIX}${randomUUID()}`)),
@@ -60,6 +74,14 @@ export function createFileStorage(dataDir: string): FileStore {
     async sha256(path) {
       const hash = createHash('sha256');
       for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+      return hash.digest('hex');
+    },
+
+    async sha256OfMany(paths) {
+      const hash = createHash('sha256');
+      for (const path of paths) {
+        for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+      }
       return hash.digest('hex');
     },
 

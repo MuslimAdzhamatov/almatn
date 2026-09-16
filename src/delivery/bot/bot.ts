@@ -41,8 +41,15 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
     await next();
   });
 
-  registerOnboarding(bot, deps.onboarding);
-  registerTexts(bot, { texts: deps.texts, files: deps.files, token, logger: deps.logger });
+  // Обработчики текстов регистрируются первыми: файл, присланный до конца настройки,
+  // должен попасть в копилку, а не в шаг онбординга. Текстовые сообщения они пропускают дальше.
+  const textsHandlers = registerTexts(bot, {
+    texts: deps.texts,
+    files: deps.files,
+    token,
+    logger: deps.logger,
+  });
+  registerOnboarding(bot, deps.onboarding, { onFinished: textsHandlers.processPending });
 
   bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);

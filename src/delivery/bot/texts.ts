@@ -131,7 +131,21 @@ export const texts = {
   },
 
   upload: {
-    notPdf: 'Пришлите, пожалуйста, текст в формате PDF — файлом (как документ).',
+    unsupported:
+      'Пришлите текст в формате PDF (файлом) или картинки страниц — JPG или PNG. Другие форматы бот не читает.',
+    photoAdvice:
+      'Совет: присылайте картинки файлом, а не фото — Telegram сильно сжимает фото, и харакаты могут размыться.',
+    imageCollected: (pages: number, limit: number) =>
+      pages >= limit
+        ? `Страниц: ${pages} — это максимум. Нажмите «Готово», чтобы разобрать текст.`
+        : `Страниц собрано: ${pages}. Пришлите следующие или нажмите «Готово».`,
+    imagesTooMany: (limit: number) =>
+      `Больше ${limit} картинок в один текст не поместится. Нажмите «Готово» или «Отмена».`,
+    imagesEmpty: 'Пока не прислано ни одной картинки.',
+    imagesCancelled: 'Загрузка картинок отменена.',
+    imagesBusy: 'Сначала закончите с картинками: нажмите «Готово» или «Отмена».',
+    savedUntilOnboarded: 'Файл сохранён ✅ Вернусь к нему, как только закончим настройку.',
+    backToPendingFile: 'Возвращаюсь к вашему файлу.',
     tooBig: (limitMb: number) =>
       `Файл больше ${limitMb} МБ — Telegram не даёт ботам скачивать такие файлы. Сожмите PDF или разделите его на части.`,
     tooManyTexts: (limit: number) =>
@@ -193,6 +207,8 @@ export const texts = {
       keepTitle: (title: string) => `Оставить «${shorten(title, 32)}»`,
       resumePending: (title: string) => `Продолжить с «${shorten(title, 32)}»`,
       replacePending: 'Удалить и загрузить новый',
+      imagesDone: (pages: number) => `✅ Готово, это все страницы (${pages})`,
+      imagesCancel: 'Отмена',
     },
     unitChanged: (unit: UnitName) => `Теперь — «${RANGE_LABELS[unit].toLowerCase()}»`,
     askTitle: (title: string) => `Как назвать текст? Напишите название или оставьте «${title}».`,

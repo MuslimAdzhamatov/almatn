@@ -18,6 +18,13 @@ export const limits = {
     /** Telegram отклоняет фото с соотношением сторон больше 20:1. */
     maxImageAspect: 20,
   },
+  /** Текст из присланных картинок: одна картинка — одна страница (CLAUDE.md, раздел 4.1). */
+  images: {
+    maxBytes: 20 * MB,
+    maxPages: 300,
+    mimeTypes: ['image/jpeg', 'image/png'],
+    extensions: ['.jpg', '.jpeg', '.png'],
+  },
   texts: {
     maxPerUser: 10,
     maxTitleLength: 100,

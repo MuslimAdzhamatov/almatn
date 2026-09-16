@@ -361,11 +361,14 @@ function mainPages(pages: readonly PageBands[], fullness: number): PageBands[] {
 
   let bestFrom = -1;
   let bestTo = -1;
+  let bestLength = 0;
   let from = -1;
   for (let i = 0; i < pages.length; i++) {
     if (textCount(pages[i]!) >= needed) {
       if (from < 0) from = i;
-      if (i - from > bestTo - bestFrom) {
+      // Длина считается явно: у отрезка из одной страницы она равна 1, а не 0.
+      if (i - from + 1 > bestLength) {
+        bestLength = i - from + 1;
         bestFrom = from;
         bestTo = i;
       }

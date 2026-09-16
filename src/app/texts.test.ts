@@ -7,8 +7,10 @@ import type {
   DialogStore,
   FileStore,
   PdfTools,
+  PendingUpload,
   TextRecord,
   TextsStore,
+  UploadsStore,
 } from './ports.js';
 import { createTexts, titleFromFileName, type ParseEvent } from './texts.js';
 
@@ -42,6 +44,7 @@ function setup() {
     infoError?: PdfToolError;
     wordsError?: Error;
     sha?: string;
+    gray?: { width: number; height: number; data: Uint8Array };
   } = { pages: 2, words: [numberedPage(1, range(1, 8)), blankPage(2)] };
 
   const texts = new Map<number, TextRecord>();
@@ -56,7 +59,7 @@ function setup() {
         ...data,
         id: nextId++,
         unitName: 'lines',
-        sourceKind: 'pdf',
+        sourceKind: data.sourceKind ?? 'pdf',
         totalLines: 0,
         parseStrategy: null,
         status: 'parsing',
@@ -96,10 +99,18 @@ function setup() {
   };
 
   const removed: string[] = [];
+  const imagePages = new Map<number, string[]>();
   let temp = 0;
   const files: FileStore = {
     tempPath: async (ext) => `/tmp/upload-${++temp}${ext}`,
     adoptSource: async (_path, id) => `/data/texts/${id}/source.pdf`,
+    imagesDir: async (id) => `/data/texts/${id}/source`,
+    adoptImagePage: async (_path, id, page, extension) => {
+      const target = `/data/texts/${id}/source/${String(page).padStart(3, '0')}${extension}`;
+      imagePages.set(id, [...(imagePages.get(id) ?? []), target]);
+      return target;
+    },
+    listImagePages: async (id) => imagePages.get(id) ?? [],
     pagesDir: async (id) => `/data/texts/${id}/pages`,
     workDir: async (id) => `/data/texts/${id}/work`,
     removeDir: async (path) => {
@@ -112,6 +123,7 @@ function setup() {
       removed.push(`text:${id}`);
     },
     sha256: async (path) => pdf.sha ?? `sha-of-${path}`,
+    sha256OfMany: async (paths) => pdf.sha ?? `sha-of-${paths.join('+')}`,
     cleanupStale: async () => ({ tmpFiles: 0, workDirs: 0 }),
   };
 
@@ -129,19 +141,34 @@ function setup() {
         range(options.firstPage ?? 1, options.lastPage ?? pdf.pages).map((p) => [p, `gray-${p}`]),
       ),
     renderPage: async (_file, options) => `page-${options.page}`,
-    loadGray: async () => ({
-      width: 827,
-      height: 1170,
-      data: new Uint8Array(827 * 1170).fill(255),
-    }),
+    loadGray: async () =>
+      pdf.gray ?? { width: 827, height: 1170, data: new Uint8Array(827 * 1170).fill(255) },
     imageSize: async () => ({ width: 1654, height: 2339 }),
     crop: async (_path, rect) => Buffer.from(JSON.stringify(rect)),
+  };
+
+  const pendingUploads: PendingUpload[] = [];
+  let uploadId = 0;
+  const uploads: UploadsStore = {
+    add: async (upload) => {
+      const row: PendingUpload = { ...upload, id: ++uploadId, createdAt: new Date() };
+      pendingUploads.push(row);
+      return row;
+    },
+    listByUser: async (userId) => pendingUploads.filter((row) => row.userId === userId),
+    countByUser: async (userId) => pendingUploads.filter((row) => row.userId === userId).length,
+    clear: async (userId) => {
+      for (let i = pendingUploads.length - 1; i >= 0; i--) {
+        if (pendingUploads[i]!.userId === userId) pendingUploads.splice(i, 1);
+      }
+    },
   };
 
   const errors: unknown[] = [];
   let tokens = 0;
   const service = createTexts({
     store,
+    uploads,
     dialogs,
     files,
     tools,
@@ -173,8 +200,26 @@ function setup() {
     removed,
     errors,
     upload,
+    pendingUploads,
+    imagePages,
     getDialog: () => dialogByUser.get(USER) ?? null,
   };
+}
+
+/** Страница-картинка: 12 полос текста на белом поле — по ним работает разбор по изображению. */
+function stripedPage(lines = 12): { width: number; height: number; data: Uint8Array } {
+  const width = 400;
+  const height = 600;
+  const data = new Uint8Array(width * height).fill(255);
+  for (let line = 0; line < lines; line++) {
+    const top = 40 + line * 40;
+    for (let y = top; y < top + 20; y++) {
+      for (let x = 40; x < 360; x += 20) {
+        for (let dx = 0; dx < 12; dx++) data[y * width + x + dx] = 0;
+      }
+    }
+  }
+  return { width, height, data };
 }
 
 const incoming = (fileName: string, mimeType?: string, fileSize = 1000) => ({
@@ -190,9 +235,9 @@ describe('проверка до скачивания', () => {
     const check = (fileName: string, mimeType?: string, fileSize = 1000) =>
       service.checkUpload(USER, incoming(fileName, mimeType, fileSize));
 
-    expect(await check('text.pdf')).toEqual({ kind: 'ok' });
-    expect(await check('scan', 'application/pdf')).toEqual({ kind: 'ok' });
-    expect(await check('notes.docx', 'application/msword')).toEqual({ kind: 'not_pdf' });
+    expect(await check('text.pdf')).toEqual({ kind: 'ok', upload: 'pdf' });
+    expect(await check('scan', 'application/pdf')).toEqual({ kind: 'ok', upload: 'pdf' });
+    expect(await check('notes.docx', 'application/msword')).toEqual({ kind: 'unsupported' });
     expect(await check('big.pdf', undefined, 21 * 1024 * 1024)).toEqual({
       kind: 'too_big',
       limitMb: 20,
@@ -211,12 +256,158 @@ describe('проверка до скачивания', () => {
   });
 });
 
+describe('текст из картинок', () => {
+  const imageFile = (name: string, mimeType = 'image/jpeg') => ({
+    fileId: `file-${name}`,
+    fileUniqueId: `uniq-${name}`,
+    fileName: name,
+    mimeType,
+    fileSize: 500_000,
+    mediaGroupId: 'album-1',
+  });
+
+  it('картинка узнаётся по типу и расширению, другие форматы — нет', async () => {
+    const { service } = setup();
+    expect(await service.checkUpload(USER, imageFile('page.jpg'))).toEqual({
+      kind: 'ok',
+      upload: 'image',
+    });
+    expect(await service.checkUpload(USER, imageFile('page.png', 'image/png'))).toEqual({
+      kind: 'ok',
+      upload: 'image',
+    });
+    expect(await service.checkUpload(USER, incoming('book.pdf'))).toEqual({
+      kind: 'ok',
+      upload: 'pdf',
+    });
+    expect(await service.checkUpload(USER, imageFile('notes.docx', 'application/msword'))).toEqual({
+      kind: 'unsupported',
+    });
+  });
+
+  it('страницы копятся до «Готово», потом разбираются по изображению', async () => {
+    const { service, pdf, texts, pendingUploads, imagePages, events } = setup();
+    pdf.gray = stripedPage();
+
+    expect(await service.addImagePage(USER, imageFile('p1.jpg'))).toEqual({
+      kind: 'collected',
+      pages: 1,
+    });
+    await service.addImagePage(USER, imageFile('p2.jpg'));
+    expect(pendingUploads).toHaveLength(2);
+    expect(await service.pendingUploads(USER)).toHaveLength(2);
+
+    const result = await service.ingestImages({
+      userId: USER,
+      fileName: 'p1.jpg',
+      pages: [
+        { tempPath: '/tmp/a.jpg', extension: '.jpg', fileSize: 100 },
+        { tempPath: '/tmp/b.jpg', extension: '.jpg', fileSize: 200 },
+      ],
+    });
+    expect(result).toMatchObject({ kind: 'accepted', textId: 1 });
+    await service.idle();
+
+    expect(texts.get(1)).toMatchObject({
+      sourceKind: 'images',
+      title: 'p1',
+      pageCount: 2,
+      fileSize: 300,
+      filePath: '/data/texts/1/source',
+      status: 'awaiting_confirm',
+      parseStrategy: 'image_lines',
+    });
+    expect(texts.get(1)!.totalLines).toBeGreaterThan(10);
+    expect(imagePages.get(1)).toEqual([
+      '/data/texts/1/source/001.jpg',
+      '/data/texts/1/source/002.jpg',
+    ]);
+    // Копилка очищена: следующий альбом начинается с нуля.
+    expect(pendingUploads).toHaveLength(0);
+    expect(events).toEqual([{ kind: 'parsed', userId: USER, textId: 1 }]);
+  });
+
+  it('картинки порций вырезаются из самих страниц, без рендера PDF', async () => {
+    const { service, pdf } = setup();
+    pdf.gray = stripedPage();
+    await service.ingestImages({
+      userId: USER,
+      fileName: 'p1.jpg',
+      pages: [{ tempPath: '/tmp/a.jpg', extension: '.jpg', fileSize: 100 }],
+    });
+    await service.idle();
+
+    const preview = await service.previewImages(1);
+    expect(preview).toHaveLength(1);
+    expect(preview[0]).toMatchObject({ page: 1, lineStart: 1, lineEnd: 5 });
+  });
+
+  it('тот же альбом второй раз — ссылка на существующий текст', async () => {
+    const { service, pdf, texts } = setup();
+    pdf.gray = stripedPage();
+    pdf.sha = 'album';
+    const pages = [{ tempPath: '/tmp/a.jpg', extension: '.jpg', fileSize: 100 }];
+    await service.ingestImages({ userId: USER, fileName: 'p1.jpg', pages });
+    await service.idle();
+    expect(await service.ingestImages({ userId: USER, fileName: 'p1.jpg', pages })).toEqual({
+      kind: 'duplicate',
+      textId: 1,
+      title: 'p1',
+    });
+    expect(texts.size).toBe(1);
+  });
+
+  it('без страниц и сверх лимита текст не создаётся', async () => {
+    const { service, removed } = setup();
+    expect(await service.ingestImages({ userId: USER, fileName: 'p.jpg', pages: [] })).toEqual({
+      kind: 'empty',
+    });
+
+    const many = Array.from({ length: 301 }, (_, i) => ({
+      tempPath: `/tmp/${i}.jpg`,
+      extension: '.jpg',
+      fileSize: 1,
+    }));
+    expect(await service.ingestImages({ userId: USER, fileName: 'p.jpg', pages: many })).toEqual({
+      kind: 'too_many_pages',
+      pages: 301,
+      limit: 300,
+    });
+    expect(removed).toContain('/tmp/300.jpg');
+  });
+
+  it('больше 300 картинок в копилку не берём', async () => {
+    const { service, pendingUploads } = setup();
+    for (let i = 0; i < 300; i++) await service.addImagePage(USER, imageFile(`p${i}.jpg`));
+    expect(await service.addImagePage(USER, imageFile('p300.jpg'))).toEqual({
+      kind: 'too_many',
+      limit: 300,
+    });
+    expect(pendingUploads).toHaveLength(300);
+  });
+
+  it('«Отмена» очищает копилку и сообщение со счётчиком', async () => {
+    const { service, pendingUploads, getDialog } = setup();
+    await service.addImagePage(USER, imageFile('p1.jpg'));
+    await service.setImagesMessage(USER, 42);
+    expect(await service.imagesMessage(USER)).toBe(42);
+
+    await service.clearUploads(USER);
+    expect(pendingUploads).toHaveLength(0);
+    expect(getDialog()).toBeNull();
+    expect(await service.imagesMessage(USER)).toBeNull();
+  });
+});
+
 describe('неподтверждённый текст при загрузке нового файла', () => {
   it('разбор ещё идёт — не спрашиваем', async () => {
     const { service, upload, texts } = setup();
     await upload('a.pdf');
     texts.get(1)!.status = 'parsing';
-    expect(await service.checkUpload(USER, incoming('b.pdf'))).toEqual({ kind: 'ok' });
+    expect(await service.checkUpload(USER, incoming('b.pdf'))).toEqual({
+      kind: 'ok',
+      upload: 'pdf',
+    });
   });
 
   it('спрашивает раньше лимита текстов и запоминает файл в диалоге', async () => {
@@ -246,7 +437,10 @@ describe('неподтверждённый текст при загрузке н
       },
     });
     // Чужой пользователь неподтверждённого текста не видит.
-    expect(await service.checkUpload(OTHER_USER, incoming('x.pdf'))).toEqual({ kind: 'ok' });
+    expect(await service.checkUpload(OTHER_USER, incoming('x.pdf'))).toEqual({
+      kind: 'ok',
+      upload: 'pdf',
+    });
   });
 
   it('«Продолжить с …» — текст остаётся, сводка доступна, кнопки больше не работают', async () => {
@@ -278,7 +472,10 @@ describe('неподтверждённый текст при загрузке н
     });
     expect(texts.size).toBe(0);
     expect(removed).toContain('text:1');
-    expect(await service.checkUpload(USER, incoming('second.pdf'))).toEqual({ kind: 'ok' });
+    expect(await service.checkUpload(USER, incoming('second.pdf'))).toEqual({
+      kind: 'ok',
+      upload: 'pdf',
+    });
     expect(await service.choosePending(USER, 't1', 'replace')).toEqual({ kind: 'stale' });
   });
 

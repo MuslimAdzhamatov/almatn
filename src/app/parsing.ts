@@ -138,6 +138,16 @@ export async function parsePdf(
  * Обычная высота и ширина строки считаются по всему документу, поэтому классификация полос
  * идёт вторым проходом — уже без изображений.
  */
+interface Scanned {
+  page: number;
+  width: number;
+  height: number;
+  widthPt: number;
+  heightPt: number;
+  rows: Uint32Array;
+  bands: InkBand[];
+}
+
 async function parseByImage(
   file: string,
   workDir: string,
@@ -145,16 +155,6 @@ async function parseByImage(
   pages: readonly PdfPageWords[],
   discard: (path: string) => Promise<void>,
 ): Promise<ParsedPdf | null> {
-  interface Scanned {
-    page: number;
-    width: number;
-    height: number;
-    widthPt: number;
-    heightPt: number;
-    rows: Uint32Array;
-    bands: InkBand[];
-  }
-
   const scanned: Scanned[] = [];
   for (const [firstPage, lastPage] of pageChunks(1, pages.length, limits.pdf.renderChunkPages)) {
     const rendered = await tools.render(file, {
@@ -186,15 +186,40 @@ async function parseByImage(
     }
   }
 
-  const height = typicalHeight(
-    scanned.flatMap((page) => page.bands),
-    imageLinesDefaults.minHeightShare,
-  );
+  return buildImageParse(scanned);
+}
+
+/**
+ * Разбор текста из присланных картинок: страница — сам файл, рендерить нечего.
+ * Координаты хранятся в пикселях страницы (масштаб 1), поэтому вырезка работает так же, как у PDF.
+ */
+export async function parseImagePages(
+  paths: readonly string[],
+  tools: Pick<PdfTools, 'loadGray'>,
+): Promise<ParsedPdf | null> {
+  const scanned: Scanned[] = [];
+  for (const [index, path] of paths.entries()) {
+    const image = await tools.loadGray(path);
+    const rows = inkPerRow(image);
+    scanned.push({
+      page: index + 1,
+      width: image.width,
+      height: image.height,
+      widthPt: image.width,
+      heightPt: image.height,
+      rows,
+      bands: inkBands(image, rows),
+    });
+  }
+  return buildImageParse(scanned);
+}
+
+/** Общая часть разбора по изображению: обычная строка, классификация полос, единицы. */
+function buildImageParse(scanned: readonly Scanned[]): ParsedPdf | null {
+  const bands = scanned.flatMap((page) => page.bands);
+  const height = typicalHeight(bands, imageLinesDefaults.minHeightShare);
   if (height <= 0) return null;
-  const width = typicalWidth(
-    scanned.flatMap((page) => page.bands),
-    height,
-  );
+  const width = typicalWidth(bands, height);
 
   const classified: PageBands[] = scanned.map((page) => ({
     page: page.page,

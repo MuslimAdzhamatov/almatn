@@ -79,7 +79,7 @@ export interface TextRecord {
 export type NewText = Pick<
   TextRecord,
   'userId' | 'title' | 'originalFileName' | 'filePath' | 'fileSize' | 'sha256' | 'pageCount'
->;
+> & { sourceKind?: SourceKind };
 
 export type TextPatch = Partial<
   Pick<
@@ -110,11 +110,54 @@ export interface TextsStore {
   firstLines(textId: number, count: number): Promise<LineBox[]>;
 }
 
+// ——— Присланные файлы, которые ещё не стали текстом ———
+
+/**
+ * Файл, полученный от Telegram, но пока не разобранный: страница альбома до кнопки «Готово»
+ * или файл, присланный до конца настройки расписания. Хранится только `file_id`.
+ */
+export interface PendingUpload {
+  id: number;
+  userId: bigint;
+  fileId: string;
+  fileUniqueId: string | null;
+  fileName: string;
+  mimeType: string | null;
+  fileSize: number | null;
+  /** Альбом Telegram: страницы одного текста приходят отдельными сообщениями. */
+  mediaGroupId: string | null;
+  createdAt: Date;
+}
+
+export type NewUpload = Omit<PendingUpload, 'id' | 'createdAt'>;
+
+export interface UploadsStore {
+  add(upload: NewUpload): Promise<PendingUpload>;
+  /** Все ожидающие файлы пользователя по порядку получения. */
+  listByUser(userId: bigint): Promise<PendingUpload[]>;
+  countByUser(userId: bigint): Promise<number>;
+  clear(userId: bigint): Promise<void>;
+}
+
 /** Файлы на диске: исходные PDF, кэш отрендеренных страниц, временные файлы. */
 export interface FileStore {
   tempPath(extension: string): Promise<string>;
-  /** Переносит загруженный файл в каталог текста, возвращает новый путь. */
+  /** Переносит загруженный PDF в каталог текста, возвращает новый путь. */
   adoptSource(tempPath: string, textId: number): Promise<string>;
+  /** Каталог страниц текста из картинок (`texts/<id>/source`). */
+  imagesDir(textId: number): Promise<string>;
+  /**
+   * Переносит скачанную картинку в каталог текста под номером страницы (с 1), возвращает путь.
+   * Имя вида `001.jpg` — по нему страницы читаются в правильном порядке.
+   */
+  adoptImagePage(
+    tempPath: string,
+    textId: number,
+    page: number,
+    extension: string,
+  ): Promise<string>;
+  /** Пути страниц текста из картинок по порядку. */
+  listImagePages(textId: number): Promise<string[]>;
   pagesDir(textId: number): Promise<string>;
   /** Временный каталог для анализа страниц — удаляется после разбора. */
   workDir(textId: number): Promise<string>;
@@ -122,6 +165,8 @@ export interface FileStore {
   removeFile(path: string): Promise<void>;
   removeText(textId: number): Promise<void>;
   sha256(path: string): Promise<string>;
+  /** Один хэш для нескольких файлов по порядку — текст из картинок узнаётся по всему альбому. */
+  sha256OfMany(paths: readonly string[]): Promise<string>;
   /**
    * Удаляет мусор, оставшийся после падения процесса: загрузки в tmp/ и каталоги анализа work-*.
    * Вызывается при старте, до приёма сообщений и возобновления разборов.

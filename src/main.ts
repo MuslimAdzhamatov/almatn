@@ -7,6 +7,7 @@ import { cropPng, imageSize, loadGray } from './core/pdf/render.js';
 import { createDb } from './db/client.js';
 import { createDialogsRepository } from './db/repositories/dialogs.js';
 import { createTextsRepository } from './db/repositories/texts.js';
+import { createUploadsRepository } from './db/repositories/uploads.js';
 import { createUsersRepository } from './db/repositories/users.js';
 import { BOT_COMMANDS, createBot } from './delivery/bot/bot.js';
 import { logger } from './lib/logger.js';
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
   const onboarding = createOnboarding({ users, dialogs });
   const texts = createTexts({
     store: createTextsRepository(db),
+    uploads: createUploadsRepository(db),
     dialogs,
     files,
     tools: pdfTools,

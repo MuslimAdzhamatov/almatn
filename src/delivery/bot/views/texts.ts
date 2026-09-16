@@ -20,7 +20,16 @@ export const textCallbacks = {
   cancel: 'txno',
   keepTitle: 'txkeep',
   pending: 'txpend',
+  images: 'tximg',
 } as const;
+
+/** Кнопки под сообщением о собранных страницах-картинках. */
+export function imagesKeyboard(pages: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(t.buttons.imagesDone(pages), `${textCallbacks.images}:done`)
+    .row()
+    .text(t.buttons.imagesCancel, `${textCallbacks.images}:cancel`);
+}
 
 const MAX_ANOMALIES_SHOWN = 10;
 
@@ -40,8 +49,8 @@ export function uploadCheckText(
   check: Exclude<UploadCheck, { kind: 'ok' | 'pending_confirm' }>,
 ): string {
   switch (check.kind) {
-    case 'not_pdf':
-      return t.notPdf;
+    case 'unsupported':
+      return t.unsupported;
     case 'too_big':
       return t.tooBig(check.limitMb);
     case 'too_many_texts':

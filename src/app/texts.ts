@@ -4,17 +4,19 @@ import { BYTES_IN_MB, limits } from '../config/limits.js';
 import { groupIntoSegments, segmentPixelRect } from '../core/pdf/crop.js';
 import type { LineBox } from '../core/pdf/layout.js';
 import { PdfToolError } from '../core/pdf/poppler.js';
-import { parsePdf, type ParseMode } from './parsing.js';
+import { parseImagePages, parsePdf, type ParseMode } from './parsing.js';
 import type {
   DialogStore,
   FileStore,
   ParseReport,
   ParseStrategy,
   PdfTools,
+  PendingUpload,
   TextRecord,
   TextStatus,
   TextsStore,
   UnitName,
+  UploadsStore,
 } from './ports.js';
 import { createSerialQueue } from './queue.js';
 
@@ -28,11 +30,17 @@ export interface IncomingFile {
   fileName: string;
   mimeType?: string | undefined;
   fileSize?: number | undefined;
+  fileUniqueId?: string | undefined;
+  /** Альбом Telegram: несколько картинок пришли одним сообщением пользователя. */
+  mediaGroupId?: string | undefined;
 }
 
+/** PDF или картинка страницы. */
+export type UploadKind = 'pdf' | 'image';
+
 export type UploadCheck =
-  | { kind: 'ok' }
-  | { kind: 'not_pdf' }
+  | { kind: 'ok'; upload: UploadKind }
+  | { kind: 'unsupported' }
   | { kind: 'too_big'; limitMb: number }
   | { kind: 'too_many_texts'; limit: number }
   /** Есть текст, ожидающий подтверждения разбора: сначала спросить, что с ним сделать. */
@@ -99,6 +107,8 @@ export type ParseEvent =
 
 export interface TextsDeps {
   store: TextsStore;
+  /** Присланные файлы, которые ещё не стали текстом: страницы альбома, файл до конца настройки. */
+  uploads: UploadsStore;
   dialogs: DialogStore;
   files: FileStore;
   tools: PdfTools;
@@ -108,6 +118,7 @@ export interface TextsDeps {
 }
 
 const PENDING_STEP = 'pending_choice';
+const IMAGES_STEP = 'images';
 
 const UNIT_NAMES: readonly UnitName[] = ['lines', 'bayts', 'hadiths', 'paragraphs'];
 
@@ -116,14 +127,29 @@ const isUnitName = (value: string): value is UnitName => UNIT_NAMES.includes(val
 export function titleFromFileName(fileName: string): string {
   // extname('.pdf') — пустая строка (Node считает это скрытым файлом), поэтому расширение режем явно.
   const base = basename(fileName)
-    .replace(/\.pdf$/i, '')
+    .replace(/\.(pdf|jpe?g|png)$/i, '')
     .replace(/_+/g, ' ')
     .trim();
   return (base || 'Текст').slice(0, limits.texts.maxTitleLength);
 }
 
+/** PDF, картинка или неподдерживаемый файл — по типу и расширению, которые сообщил Telegram. */
+export function classifyUpload(file: IncomingFile): UploadKind | null {
+  const extension = extname(file.fileName).toLowerCase();
+  if (file.mimeType === 'application/pdf' || extension === '.pdf') return 'pdf';
+  const mimeType = file.mimeType ?? '';
+  if (
+    limits.images.mimeTypes.some((type) => type === mimeType) ||
+    limits.images.extensions.some((known) => known === extension)
+  ) {
+    return 'image';
+  }
+  return null;
+}
+
 export function createTexts({
   store,
+  uploads,
   dialogs,
   files,
   tools,
@@ -153,7 +179,12 @@ export function createTexts({
     if (!text || text.status !== 'parsing') return;
     const workDir = await files.workDir(textId);
     try {
-      const parsed = await parsePdf(text.filePath, workDir, tools, mode, files.removeFile);
+      // У текста из картинок страница — сам файл, рендерить нечего.
+      const parsed =
+        text.sourceKind === 'images'
+          ? await parseImagePages(await files.listImagePages(textId), tools)
+          : await parsePdf(text.filePath, workDir, tools, mode, files.removeFile);
+      if (!parsed) throw new PdfToolError('Не удалось найти строки на картинках', 'damaged');
       await store.replaceLines(textId, parsed.boxes);
       await store.update(textId, {
         status: 'awaiting_confirm',
@@ -215,13 +246,22 @@ export function createTexts({
     text: TextRecord,
     boxes: readonly LineBox[],
   ): Promise<LineImage[]> {
-    const outDir = await files.pagesDir(text.id);
     const dpi = limits.pdf.cropDpi;
+    // Для текста из картинок координаты хранятся в пикселях страницы, поэтому масштаб равен 1.
+    const imagePages = text.sourceKind === 'images' ? await files.listImagePages(text.id) : null;
+    const outDir = imagePages ? '' : await files.pagesDir(text.id);
     const images: LineImage[] = [];
     for (const segment of groupIntoSegments(boxes)) {
-      const path = await tools.renderPage(text.filePath, { outDir, dpi, page: segment.page });
+      const path =
+        imagePages?.[segment.page - 1] ??
+        (imagePages
+          ? null
+          : await tools.renderPage(text.filePath, { outDir, dpi, page: segment.page }));
+      if (!path) continue;
       const size = await tools.imageSize(path);
-      const page = { widthPt: (size.width * 72) / dpi, heightPt: (size.height * 72) / dpi };
+      const page = imagePages
+        ? { widthPt: size.width, heightPt: size.height }
+        : { widthPt: (size.width * 72) / dpi, heightPt: (size.height * 72) / dpi };
       const rect = segmentPixelRect(segment, page, size);
       images.push({
         page: segment.page,
@@ -247,11 +287,11 @@ export function createTexts({
      * что с тем текстом сделать (раньше лимита текстов: удаление неподтверждённого освобождает место).
      */
     async checkUpload(userId: bigint, file: IncomingFile): Promise<UploadCheck> {
-      const isPdf =
-        file.mimeType === 'application/pdf' || extname(file.fileName).toLowerCase() === '.pdf';
-      if (!isPdf) return { kind: 'not_pdf' };
-      if ((file.fileSize ?? 0) > limits.pdf.maxBytes) {
-        return { kind: 'too_big', limitMb: limits.pdf.maxBytes / BYTES_IN_MB };
+      const upload = classifyUpload(file);
+      if (!upload) return { kind: 'unsupported' };
+      const maxBytes = upload === 'pdf' ? limits.pdf.maxBytes : limits.images.maxBytes;
+      if ((file.fileSize ?? 0) > maxBytes) {
+        return { kind: 'too_big', limitMb: maxBytes / BYTES_IN_MB };
       }
       const pending = await store.findFirstByStatus(userId, 'awaiting_confirm');
       if (pending) {
@@ -266,7 +306,112 @@ export function createTexts({
       if ((await store.countByUser(userId)) >= limits.texts.maxPerUser) {
         return { kind: 'too_many_texts', limit: limits.texts.maxPerUser };
       }
-      return { kind: 'ok' };
+      return { kind: 'ok', upload };
+    },
+
+    /** Картинка-страница кладётся в копилку: текст создаётся только по кнопке «Готово». */
+    async addImagePage(
+      userId: bigint,
+      file: IncomingFile,
+    ): Promise<{ kind: 'collected'; pages: number } | { kind: 'too_many'; limit: number }> {
+      const collected = await uploads.countByUser(userId);
+      if (collected >= limits.images.maxPages) {
+        return { kind: 'too_many', limit: limits.images.maxPages };
+      }
+      await uploads.add({
+        userId,
+        fileId: file.fileId,
+        fileUniqueId: file.fileUniqueId ?? null,
+        fileName: file.fileName,
+        mimeType: file.mimeType ?? null,
+        fileSize: file.fileSize ?? null,
+        mediaGroupId: file.mediaGroupId ?? null,
+      });
+      return { kind: 'collected', pages: collected + 1 };
+    },
+
+    /** Файл, присланный до конца настройки расписания: вернёмся к нему, когда настройка закончится. */
+    async stashFile(userId: bigint, file: IncomingFile) {
+      await uploads.add({
+        userId,
+        fileId: file.fileId,
+        fileUniqueId: file.fileUniqueId ?? null,
+        fileName: file.fileName,
+        mimeType: file.mimeType ?? null,
+        fileSize: file.fileSize ?? null,
+        mediaGroupId: file.mediaGroupId ?? null,
+      });
+    },
+
+    pendingUploads: (userId: bigint): Promise<PendingUpload[]> => uploads.listByUser(userId),
+
+    async clearUploads(userId: bigint) {
+      await uploads.clear(userId);
+      const dialog = await dialogs.get(userId);
+      if (dialog?.flow === FLOW && dialog.step === IMAGES_STEP) await dialogs.clear(userId);
+    },
+
+    /**
+     * Сообщение со счётчиком страниц: на каждую картинку альбома бот не отвечает отдельно,
+     * а обновляет одно сообщение. Его номер переживает перезапуск вместе с диалогом.
+     */
+    async setImagesMessage(userId: bigint, messageId: number) {
+      await dialogs.set(userId, { flow: FLOW, step: IMAGES_STEP, data: { messageId } });
+    },
+
+    async imagesMessage(userId: bigint): Promise<number | null> {
+      const dialog = await dialogs.get(userId);
+      if (dialog?.flow !== FLOW || dialog.step !== IMAGES_STEP) return null;
+      const messageId = Number(dialog.data.messageId);
+      return Number.isInteger(messageId) ? messageId : null;
+    },
+
+    /** Скачанные страницы альбома → текст из картинок (`sourceKind = images`). */
+    async ingestImages(input: {
+      userId: bigint;
+      fileName: string;
+      pages: readonly { tempPath: string; extension: string; fileSize: number }[];
+    }): Promise<IngestResult> {
+      const discard = async () => {
+        for (const page of input.pages) await files.removeFile(page.tempPath);
+      };
+      if (input.pages.length === 0) return { kind: 'empty' };
+      if (input.pages.length > limits.images.maxPages) {
+        await discard();
+        return {
+          kind: 'too_many_pages',
+          pages: input.pages.length,
+          limit: limits.images.maxPages,
+        };
+      }
+
+      const sha256 = await files.sha256OfMany(input.pages.map((page) => page.tempPath));
+      const existing = await store.findBySha(input.userId, sha256);
+      if (existing) {
+        await discard();
+        return { kind: 'duplicate', textId: existing.id, title: existing.title };
+      }
+
+      const text = await store.create({
+        userId: input.userId,
+        title: titleFromFileName(input.fileName),
+        originalFileName: input.fileName,
+        sourceKind: 'images',
+        // Путь к каталогу страниц известен только после создания текста.
+        filePath: '',
+        fileSize: input.pages.reduce((total, page) => total + page.fileSize, 0),
+        sha256,
+        pageCount: input.pages.length,
+      });
+      for (const [index, page] of input.pages.entries()) {
+        await files.adoptImagePage(page.tempPath, text.id, index + 1, page.extension);
+      }
+      await store.update(text.id, { filePath: await files.imagesDir(text.id) });
+      await uploads.clear(input.userId);
+      const dialog = await dialogs.get(input.userId);
+      if (dialog?.flow === FLOW && dialog.step === IMAGES_STEP) await dialogs.clear(input.userId);
+      enqueue(text.id, 'auto');
+      return { kind: 'accepted', textId: text.id, queued: queue.pending };
     },
 
     /** Ответ на вопрос о неподтверждённом тексте: keep — продолжить с ним, replace — удалить и загрузить новый. */

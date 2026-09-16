@@ -179,6 +179,11 @@ describe('imageLinesToBoxes', () => {
     expect(boxes[2]?.page).toBe(4);
   });
 
+  it('текст из одной страницы разбирается', () => {
+    const boxes = imageLinesToBoxes([page(1, [text(50), text(90), text(130)])]);
+    expect(boxes.map((box) => box.lineNumber)).toEqual([1, 2, 3]);
+  });
+
   it('обложку и пустые страницы отбрасывает', () => {
     const boxes = imageLinesToBoxes([
       page(1, [text(50)]),
