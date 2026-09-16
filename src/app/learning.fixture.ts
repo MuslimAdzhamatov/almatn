@@ -482,6 +482,7 @@ export function setup(
   return {
     store,
     notifier,
+    images,
     learning,
     reviewsApp,
     pause,
