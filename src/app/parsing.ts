@@ -1,21 +1,38 @@
 import { limits } from '../config/limits.js';
 import { pageChunks } from '../core/pdf/chunks.js';
+import type { PdfPageWords } from '../core/pdf/bbox.js';
 import { layoutNumberedLines, type LineBox } from '../core/pdf/layout.js';
 import { pagesAsUnits } from '../core/pdf/manual.js';
 import { detectNumberedLines, estimatePitch, type NumberedLine } from '../core/pdf/numbers.js';
 import { PdfToolError } from '../core/pdf/poppler.js';
+import type { NumberingAnomaly } from '../core/pdf/numbers.js';
+import { attachHeadings, detectTextLines, type TextLine } from '../core/pdf/textlines.js';
 import type { ParseReport, ParseStrategy, PdfTools } from './ports.js';
 
-// Разбор PDF на строки (CLAUDE.md, раздел 4.1): по напечатанным номерам, иначе — постранично.
-// Разбор по строкам текстового слоя и по изображению (сканы) — этап 3b.
+// Разбор PDF на единицы заучивания (CLAUDE.md, раздел 4.1): по напечатанным номерам,
+// иначе по строкам текстового слоя, иначе постранично. Разбор сканов по изображению — шаг 3b.3.
 
-/** auto — по номерам, если они найдены; manual_page — страница целиком. */
+/** auto — по номерам или по строкам текста; manual_page — страница целиком. */
 export type ParseMode = 'auto' | 'manual_page';
 
 export interface ParsedPdf {
   strategy: ParseStrategy;
   boxes: LineBox[];
   report: ParseReport;
+}
+
+/** Полоса на странице: строка текста или заголовок раздела перед ней. */
+interface Unit {
+  line: NumberedLine;
+  heading: boolean;
+}
+
+interface ParsePlan {
+  strategy: ParseStrategy;
+  units: Unit[];
+  firstPage: number;
+  lastPage: number;
+  anomalies: NumberingAnomaly[];
 }
 
 export async function parsePdf(
@@ -29,8 +46,8 @@ export async function parsePdf(
   const pages = await tools.words(file);
   if (pages.length === 0) throw new PdfToolError('В PDF нет страниц', 'damaged');
 
-  const numbered = mode === 'auto' ? detectNumberedLines(pages) : null;
-  if (!numbered) {
+  const plan = mode === 'auto' ? planUnits(pages) : null;
+  if (!plan) {
     const sizes = pages.map((p) => ({ page: p.page, widthPt: p.width, heightPt: p.height }));
     return {
       strategy: 'manual_page',
@@ -39,20 +56,21 @@ export async function parsePdf(
         firstPage: 1,
         lastPage: pages.length,
         anomalies: [],
-        ...(mode === 'auto' && { fallbackReason: 'no_numbers' as const }),
+        ...(mode === 'auto' && { fallbackReason: 'no_text_layer' as const }),
       },
     };
   }
 
   // Страницы анализируются по одной, чтобы не держать в памяти изображения всего документа,
   // а рендерятся частями — чтобы большие книги не упирались в таймаут pdftoppm и не занимали диск.
-  const pitch = estimatePitch(numbered.lines);
-  const byPage = new Map<number, NumberedLine[]>();
-  for (const line of numbered.lines)
-    byPage.set(line.page, [...(byPage.get(line.page) ?? []), line]);
+  const pitch = estimatePitch(plan.units.map((unit) => unit.line));
+  const byPage = new Map<number, Unit[]>();
+  for (const unit of plan.units)
+    byPage.set(unit.line.page, [...(byPage.get(unit.line.page) ?? []), unit]);
 
   const boxes: LineBox[] = [];
-  const chunks = pageChunks(numbered.firstPage, numbered.lastPage, limits.pdf.renderChunkPages);
+  const headings: boolean[] = [];
+  const chunks = pageChunks(plan.firstPage, plan.lastPage, limits.pdf.renderChunkPages);
   for (const [firstPage, lastPage] of chunks) {
     const chunkPages = [...byPage.keys()].filter((page) => page >= firstPage && page <= lastPage);
     if (chunkPages.length === 0) continue;
@@ -74,7 +92,15 @@ export async function parsePdf(
           heightPt: size.height,
           image: await tools.loadGray(path),
         };
-        boxes.push(...layoutNumberedLines(byPage.get(page)!, new Map([[page, raster]]), pitch));
+        const units = byPage.get(page)!;
+        boxes.push(
+          ...layoutNumberedLines(
+            units.map((unit) => unit.line),
+            new Map([[page, raster]]),
+            pitch,
+          ),
+        );
+        headings.push(...units.map((unit) => unit.heading));
       }
     } finally {
       for (const path of rendered.values()) await discard(path);
@@ -82,12 +108,49 @@ export async function parsePdf(
   }
 
   return {
-    strategy: 'numbers',
-    boxes,
-    report: {
+    strategy: plan.strategy,
+    // Заголовки размечались вместе со строками, чтобы границы уточнились по пикселям,
+    // и только теперь становятся фрагментами своих единиц.
+    boxes: headings.some(Boolean) ? attachHeadings(boxes, headings) : boxes,
+    report: { firstPage: plan.firstPage, lastPage: plan.lastPage, anomalies: plan.anomalies },
+  };
+}
+
+/** Какой стратегией разбирать и какие полосы размечать. */
+function planUnits(pages: readonly PdfPageWords[]): ParsePlan | null {
+  const numbered = detectNumberedLines(pages);
+  if (numbered) {
+    return {
+      strategy: 'numbers',
+      units: numbered.lines.map((line) => ({ line, heading: false })),
       firstPage: numbered.firstPage,
       lastPage: numbered.lastPage,
       anomalies: numbered.anomalies,
-    },
+    };
+  }
+
+  const text = detectTextLines(pages);
+  if (!text) return null;
+
+  // Строки и заголовки идут вперемежку в порядке чтения; номера единиц проставит attachHeadings.
+  const units: Unit[] = [
+    ...text.lines.map((line) => ({ line: toNumbered(line), heading: false })),
+    ...text.headings.map((heading) => ({ line: toNumbered(heading.line), heading: true })),
+  ].sort((a, b) => a.line.page - b.line.page || a.line.yMin - b.line.yMin);
+
+  return {
+    strategy: 'text_lines',
+    units,
+    firstPage: text.firstPage,
+    lastPage: text.lastPage,
+    anomalies: [],
   };
 }
+
+const toNumbered = (line: TextLine): NumberedLine => ({
+  lineNumber: 0,
+  printedNumber: null,
+  page: line.page,
+  yMin: line.yMin,
+  yMax: line.yMax,
+});

@@ -347,7 +347,7 @@ describe('загрузка и разбор', () => {
     expect(texts.get(1)).toMatchObject({
       parseStrategy: 'manual_page',
       totalLines: 2,
-      parseReport: { fallbackReason: 'no_numbers' },
+      parseReport: { fallbackReason: 'no_text_layer' },
     });
     expect(await service.previewImages(1)).toHaveLength(1);
   });

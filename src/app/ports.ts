@@ -52,8 +52,8 @@ export interface ParseReport {
   firstPage: number;
   lastPage: number;
   anomalies: NumberingAnomaly[];
-  /** Номера строк не найдены — текст разобран постранично автоматически. */
-  fallbackReason?: 'no_numbers';
+  /** Ни номеров, ни пригодного текстового слоя — текст разобран постранично автоматически. */
+  fallbackReason?: 'no_text_layer';
 }
 
 export interface TextRecord {

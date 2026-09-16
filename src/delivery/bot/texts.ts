@@ -160,9 +160,11 @@ export const texts = {
     found: (count: string, firstPage: number, lastPage: number, pageCount: number) =>
       `Найдено: ${count} на страницах ${firstPage}–${lastPage} (всего страниц в файле: ${pageCount}).`,
     byNumbers: 'Способ разбора: по номерам строк.',
+    byTextLines:
+      'Способ разбора: по строкам текста — номеров в файле нет, поэтому строки пронумерованы по порядку.',
     byPages: (count: string) => `Способ разбора: постранично — ${count}.`,
-    noNumbersFallback: (count: string) =>
-      `Номера строк в этом PDF не найдены, поэтому пока единица заучивания — страница целиком (${count}). Разбор по строкам для текстов без номеров и сканов появится в следующем обновлении.`,
+    noTextLayerFallback: (count: string) =>
+      `В этом PDF нет ни номеров строк, ни текстового слоя — похоже, это скан. Пока единица заучивания — страница целиком (${count}). Разбор сканов по изображению появится в следующем обновлении.`,
     anomaliesTitle: 'Исправления нумерации:',
     anomaly: (anomaly: NumberingAnomaly) => {
       switch (anomaly.kind) {

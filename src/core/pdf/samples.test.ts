@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { layoutNumberedLines, type PageRaster } from './layout.js';
 import { detectNumberedLines } from './numbers.js';
+import { detectTextLines } from './textlines.js';
 import { extractWords, pdfInfo, renderPages } from './poppler.js';
 import { loadGray } from './render.js';
 
@@ -71,8 +72,36 @@ describe.skipIf(!hasPoppler)('эталонные PDF', () => {
     expect(parse?.lines.map((line) => line.printedNumber)).toEqual(range(1, 290));
   }, 60_000);
 
-  it('PDF без текстового слоя (скан): номеров нет', async () => {
-    const parse = detectNumberedLines(await extractWords(join(SAMPLES, 'المقدمة الجزرية.pdf')));
-    expect(parse).toBeNull();
+  it('PDF без текстового слоя (скан): ни номеров, ни строк', async () => {
+    const pages = await extractWords(join(SAMPLES, 'المقدمة الجزرية.pdf'));
+    expect(detectNumberedLines(pages)).toBeNull();
+    expect(detectTextLines(pages)).toBeNull();
+  }, 60_000);
+
+  it('manzuma-fiqh.pdf по строкам текста: те же бейты плюс заголовки разделов', async () => {
+    const parse = detectTextLines(await extractWords(join(SAMPLES, 'manzuma-fiqh.pdf')));
+    // Бейтов 448 (стр. 2–32); сверх них — концевая стр. 33 и короткие строки вступления.
+    expect(parse?.lines.length).toBeGreaterThanOrEqual(448);
+    expect(parse?.lines.length).toBeLessThan(500);
+    expect(parse).toMatchObject({ firstPage: 2, lastPage: 33 });
+    // Заголовки разделов («باب …») выше строк текста и в строки не попадают.
+    expect(parse!.headings.length).toBeGreaterThan(50);
+    const textHeight = parse!.lines[0]!.yMax - parse!.lines[0]!.yMin;
+    for (const { line } of parse!.headings)
+      expect(line.yMax - line.yMin).toBeGreaterThan(textHeight);
+    // Колонтитул с номером страницы отсечён.
+    expect(parse!.lines.every((line) => line.yMin < 800)).toBe(true);
+  }, 60_000);
+
+  it('متن عمدة الاحكام.pdf: текстовый слой сломан, по строкам не разбирается', async () => {
+    const pages = await extractWords(join(SAMPLES, 'متن عمدة الاحكام.pdf'));
+    expect(detectTextLines(pages)).toBeNull();
+  }, 180_000);
+
+  it('sollam_wosol.pdf по строкам текста: проза разбирается, колонтитул отсечён', async () => {
+    const parse = detectTextLines(await extractWords(join(SAMPLES, 'sollam_wosol.pdf')));
+    expect(parse?.lines.length).toBeGreaterThan(500);
+    expect(parse?.firstPage).toBe(8);
+    expect(parse!.lines.every((line) => line.yMin < 600)).toBe(true);
   }, 60_000);
 });

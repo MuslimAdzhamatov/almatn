@@ -80,10 +80,13 @@ export function summaryText(summary: TextSummary): string {
 
   if (strategy === 'manual_page') {
     lines.push(
-      report.fallbackReason === 'no_numbers' ? t.noNumbersFallback(count) : t.byPages(count),
+      report.fallbackReason === 'no_text_layer' ? t.noTextLayerFallback(count) : t.byPages(count),
     );
   } else {
-    lines.push(t.found(count, report.firstPage, report.lastPage, summary.pageCount), t.byNumbers);
+    lines.push(
+      t.found(count, report.firstPage, report.lastPage, summary.pageCount),
+      strategy === 'text_lines' ? t.byTextLines : t.byNumbers,
+    );
     if (report.anomalies.length > 0) {
       lines.push('', t.anomaliesTitle);
       for (const anomaly of report.anomalies.slice(0, MAX_ANOMALIES_SHOWN)) {
@@ -108,11 +111,11 @@ export function parseSummaryKeyboard(summary: TextSummary): InlineKeyboard {
   const keyboard = new InlineKeyboard()
     .text(t.buttons.confirm, `${textCallbacks.confirm}:${id}`)
     .row();
-  if (summary.strategy === 'numbers') {
+  if (summary.strategy === 'numbers' || summary.strategy === 'text_lines') {
     const nextUnit: UnitName = summary.unitName === 'lines' ? 'bayts' : 'lines';
     keyboard.text(t.buttons.callAs(nextUnit), `${textCallbacks.unit}:${id}:${nextUnit}`).row();
     keyboard.text(t.buttons.byPages, `${textCallbacks.reparse}:${id}:manual_page`).row();
-  } else if (summary.report.fallbackReason !== 'no_numbers') {
+  } else if (summary.report.fallbackReason !== 'no_text_layer') {
     keyboard.text(t.buttons.byNumbers, `${textCallbacks.reparse}:${id}:auto`).row();
   }
   return keyboard.text(t.buttons.cancel, `${textCallbacks.cancel}:${id}`);
