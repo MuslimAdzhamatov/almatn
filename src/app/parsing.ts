@@ -13,6 +13,7 @@ import {
   type PageBands,
 } from '../core/pdf/imagelines.js';
 import { inkPerRow, layoutNumberedLines, type LineBox } from '../core/pdf/layout.js';
+import { dropFootnotes, paragraphsToBoxes } from '../core/pdf/paragraphs.js';
 import { pagesAsUnits } from '../core/pdf/manual.js';
 import { detectNumberedLines, estimatePitch, type NumberedLine } from '../core/pdf/numbers.js';
 import { PdfToolError } from '../core/pdf/poppler.js';
@@ -214,7 +215,10 @@ export async function parseImagePages(
   return buildImageParse(scanned);
 }
 
-/** Общая часть разбора по изображению: обычная строка, классификация полос, единицы. */
+/**
+ * Общая часть разбора по изображению: обычная строка, классификация полос, единицы.
+ * Сначала пробуем абзацы (проза: хадисы), потом строки (стихи и сканы поэзии).
+ */
 function buildImageParse(scanned: readonly Scanned[]): ParsedPdf | null {
   const bands = scanned.flatMap((page) => page.bands);
   const height = typicalHeight(bands, imageLinesDefaults.minHeightShare);
@@ -230,17 +234,21 @@ function buildImageParse(scanned: readonly Scanned[]): ParsedPdf | null {
     bands: refineBands(page.bands, page.rows, { height, width, imageWidth: page.width }),
   }));
 
-  const boxes = imageLinesToBoxes(dropRunningBands(classified, height));
-  if (boxes.length < imageLinesDefaults.minLines) return null;
+  const cleaned = dropRunningBands(classified, height);
 
+  const paragraphs = paragraphsToBoxes(dropFootnotes(cleaned));
+  if (paragraphs) return imageResult('paragraphs', paragraphs);
+
+  const boxes = imageLinesToBoxes(cleaned);
+  if (boxes.length < imageLinesDefaults.minLines) return null;
+  return imageResult('image_lines', boxes);
+}
+
+function imageResult(strategy: ParseStrategy, boxes: LineBox[]): ParsedPdf {
   return {
-    strategy: 'image_lines',
+    strategy,
     boxes,
-    report: {
-      firstPage: boxes[0]!.page,
-      lastPage: boxes.at(-1)!.page,
-      anomalies: [],
-    },
+    report: { firstPage: boxes[0]!.page, lastPage: boxes.at(-1)!.page, anomalies: [] },
   };
 }
 

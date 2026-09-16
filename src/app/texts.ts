@@ -189,6 +189,8 @@ export function createTexts({
       await store.update(textId, {
         status: 'awaiting_confirm',
         parseStrategy: parsed.strategy,
+        // У прозы единица — абзац; в сборнике хадисов пользователь переключит её на «хадисы».
+        ...(parsed.strategy === 'paragraphs' && { unitName: 'paragraphs' as const }),
         totalLines: parsed.boxes.length,
         parseReport: parsed.report,
         parseError: null,

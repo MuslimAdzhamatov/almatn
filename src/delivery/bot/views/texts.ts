@@ -114,7 +114,16 @@ export function summaryText(summary: TextSummary): string {
 function strategyNote(strategy: TextSummary['strategy']): string {
   if (strategy === 'text_lines') return t.byTextLines;
   if (strategy === 'image_lines') return t.byImageLines;
+  if (strategy === 'paragraphs') return t.byParagraphs;
   return t.byNumbers;
+}
+
+/** Что предложить назвать единицей: у прозы это абзацы или хадисы, у стихов — строки или бейты. */
+function nextUnitName(summary: TextSummary): UnitName {
+  if (summary.strategy === 'paragraphs') {
+    return summary.unitName === 'paragraphs' ? 'hadiths' : 'paragraphs';
+  }
+  return summary.unitName === 'lines' ? 'bayts' : 'lines';
 }
 
 export function imageCaption(summary: TextSummary, image: LineImage): string {
@@ -126,12 +135,8 @@ export function parseSummaryKeyboard(summary: TextSummary): InlineKeyboard {
   const keyboard = new InlineKeyboard()
     .text(t.buttons.confirm, `${textCallbacks.confirm}:${id}`)
     .row();
-  if (
-    summary.strategy === 'numbers' ||
-    summary.strategy === 'text_lines' ||
-    summary.strategy === 'image_lines'
-  ) {
-    const nextUnit: UnitName = summary.unitName === 'lines' ? 'bayts' : 'lines';
+  if (summary.strategy !== 'manual_page' && summary.strategy !== 'manual_split') {
+    const nextUnit = nextUnitName(summary);
     keyboard.text(t.buttons.callAs(nextUnit), `${textCallbacks.unit}:${id}:${nextUnit}`).row();
     keyboard.text(t.buttons.byPages, `${textCallbacks.reparse}:${id}:manual_page`).row();
   } else if (summary.report.fallbackReason !== 'no_text_layer') {
