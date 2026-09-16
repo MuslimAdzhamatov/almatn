@@ -5,7 +5,7 @@ import type { Db } from '../client.js';
 
 const OPEN_STATUSES = ['active', 'learning_done'] as const;
 
-function toRecord(row: Plan): PlanRecord {
+export function toPlanRecord(row: Plan): PlanRecord {
   return {
     id: row.id,
     textId: row.textId,
@@ -39,7 +39,7 @@ export function createPlansRepository(db: Db): PlansStore {
             estimatedEndDate: plan.estimatedEndDate && isoToDbDate(plan.estimatedEndDate),
           },
         });
-        return toRecord(row);
+        return toPlanRecord(row);
       } catch (err) {
         // plans_one_open_per_text: у текста уже есть открытый план.
         if (isUniqueViolation(err)) return null;
@@ -51,7 +51,7 @@ export function createPlansRepository(db: Db): PlansStore {
       const row = await db.plan.findFirst({
         where: { textId, status: { in: [...OPEN_STATUSES] } },
       });
-      return row ? toRecord(row) : null;
+      return row ? toPlanRecord(row) : null;
     },
 
     async listOpenByUser(userId) {
@@ -60,7 +60,7 @@ export function createPlansRepository(db: Db): PlansStore {
         include: { text: { select: { title: true } } },
         orderBy: { createdAt: 'asc' },
       });
-      return rows.map(({ text, ...row }) => ({ ...toRecord(row), textTitle: text.title }));
+      return rows.map(({ text, ...row }) => ({ ...toPlanRecord(row), textTitle: text.title }));
     },
 
     async scheduledReviews(userId, exceptTextId) {
