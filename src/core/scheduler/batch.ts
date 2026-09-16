@@ -144,9 +144,16 @@ export function isQuietDebt(since: Date | null, now: Date, s: ScheduleRules): bo
 }
 
 /**
- * Автопауза: 7 дней без нажатий и команд, и при этом есть долг хотя бы по одному тексту.
- * Без долга пользователю может быть просто нечего нажимать (между повторами +2 нед и +1 мес).
+ * Автопауза: 7 дней без нажатий и команд, и при этом долг тянется хотя бы одни полные плановые
+ * сутки (о нём уже приходили сообщения без ответа). Без долга пользователю может быть просто нечего
+ * нажимать (между повторами +2 нед и +1 мес), а только что наступивший повтор ещё не отправлен.
  */
-export function shouldAutoPause(lastActivityAt: Date, now: Date, hasAnyDebt: boolean): boolean {
-  return hasAnyDebt && now.getTime() - lastActivityAt.getTime() >= AUTO_PAUSE_DAYS * DAY;
+export function shouldAutoPause(
+  lastActivityAt: Date,
+  now: Date,
+  debtStartedAt: Date | null,
+  s: ScheduleRules,
+): boolean {
+  if (now.getTime() - lastActivityAt.getTime() < AUTO_PAUSE_DAYS * DAY) return false;
+  return debtStartedAt !== null && debtDays(debtStartedAt, now, s) >= 1;
 }

@@ -182,10 +182,15 @@ describe('защита от спама', () => {
     expect(isQuietDebt(null, at('2026-09-16T03:00:00Z'), s)).toBe(false);
   });
 
-  it('автопауза — 7 дней без активности и есть долг', () => {
+  it('автопауза — 7 дней без активности и долг хотя бы сутки', () => {
     const last = at('2026-09-09T10:00:00Z');
-    expect(shouldAutoPause(last, at('2026-09-16T10:00:00Z'), true)).toBe(true);
-    expect(shouldAutoPause(last, at('2026-09-16T09:59:00Z'), true)).toBe(false);
-    expect(shouldAutoPause(last, at('2026-09-20T10:00:00Z'), false)).toBe(false);
+    const oldDebt = at('2026-09-15T03:00:00Z');
+    expect(shouldAutoPause(last, at('2026-09-16T10:00:00Z'), oldDebt, s)).toBe(true);
+    expect(shouldAutoPause(last, at('2026-09-16T09:59:00Z'), oldDebt, s)).toBe(false);
+    expect(shouldAutoPause(last, at('2026-09-20T10:00:00Z'), null, s)).toBe(false);
+    // Повтор только что наступил — сначала он должен прийти.
+    const fresh = at('2026-09-16T03:00:00Z');
+    expect(shouldAutoPause(last, at('2026-09-16T03:00:00Z'), fresh, s)).toBe(false);
+    expect(shouldAutoPause(last, at('2026-09-17T03:00:00Z'), fresh, s)).toBe(true);
   });
 });

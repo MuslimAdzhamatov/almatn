@@ -6,8 +6,7 @@ import {
   pauseWarningDue,
   shiftDate,
 } from '../core/plan/pausing.js';
-import { shouldAutoPause } from '../core/scheduler/batch.js';
-import { hasDebt } from '../core/scheduler/rules.js';
+import { debtSince, shouldAutoPause } from '../core/scheduler/batch.js';
 import { mainSlotOn } from '../core/srs/slots.js';
 import type { Images } from './images.js';
 import { isPaused, type Learning } from './learning.js';
@@ -62,13 +61,11 @@ export function createPause({
 }: PauseDeps) {
   const sending = { store, images, reportError };
 
-  async function textHasDebt(ctx: PlanContext, now: Date): Promise<boolean> {
+  /** С какого момента тянется долг по тексту (null — долга нет). */
+  async function textDebtSince(ctx: PlanContext, now: Date): Promise<Date | null> {
     const unlearned =
       ctx.plan.status === 'active' ? await store.unlearnedPortion(ctx.plan.id) : null;
-    return hasDebt(now, {
-      unlearnedPortion: unlearned !== null,
-      reviews: await store.textReviews(ctx.text.id),
-    });
+    return debtSince(now, await store.textReviews(ctx.text.id), unlearned);
   }
 
   /** Служебное сообщение с записью в журнале; false — не дошло (запись удалена). */
@@ -104,10 +101,13 @@ export function createPause({
     const { user } = plans[0]!;
     if (user.blockedAt || isPaused(user, now)) return;
     // Дешёвая проверка до подсчёта долга: активность была недавно.
-    if (!shouldAutoPause(user.lastActivityAt, now, true)) return;
-    let debt = false;
-    for (const ctx of plans) debt ||= await textHasDebt(ctx, now);
-    if (!shouldAutoPause(user.lastActivityAt, now, debt)) return;
+    if (!shouldAutoPause(user.lastActivityAt, now, new Date(0), user)) return;
+    let since: Date | null = null;
+    for (const ctx of plans) {
+      const text = await textDebtSince(ctx, now);
+      if (text && (!since || text < since)) since = text;
+    }
+    if (!shouldAutoPause(user.lastActivityAt, now, since, user)) return;
 
     // Одна автопауза на период бездействия: «Продолжить» — это уже активность.
     const key = `autopause:${userId}:${user.lastActivityAt.toISOString()}`;
