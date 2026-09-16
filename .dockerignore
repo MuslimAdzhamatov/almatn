@@ -1,0 +1,14 @@
+.git
+.claude
+.env
+.env.*
+!.env.example
+node_modules
+dist
+data
+backups
+coverage
+samples
+src/generated
+**/*.test.ts
+**/.DS_Store

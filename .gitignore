@@ -9,3 +9,4 @@ prisma/dev.db
 coverage/
 data/
 src/generated/
+backups/

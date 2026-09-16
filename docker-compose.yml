@@ -1,0 +1,61 @@
+# Продакшен: бот + PostgreSQL на одном VPS (вне РФ). Инструкция — README.md, раздел «Деплой».
+# Переменные — в файле .env рядом с этим файлом (образец — .env.production.example).
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: almatn
+      POSTGRES_DB: almatn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U almatn -d almatn']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Применяет миграции и завершается; бот стартует только после успеха.
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://almatn:${POSTGRES_PASSWORD}@db:5432/almatn
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  bot:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    # tini: корректно передаёт SIGTERM и собирает дочерние процессы poppler.
+    init: true
+    # Остановка ждёт текущий тик планировщика (рендер и отправка картинок).
+    stop_grace_period: 2m
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN:?задайте BOT_TOKEN в .env}
+      DATABASE_URL: postgresql://almatn:${POSTGRES_PASSWORD}@db:5432/almatn
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: UTC
+    volumes:
+      - botdata:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: '5'
+
+volumes:
+  pgdata:
+  botdata:
