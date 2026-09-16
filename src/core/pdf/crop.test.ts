@@ -79,7 +79,8 @@ describe('segmentPixelRect', () => {
       { widthPt: 595, heightPt: 842 },
       { width: 1653, height: 2339 },
     );
-    expect(rect).toEqual({ left: 166, top: 100, width: 1390, height: 101 });
+    // По бокам — запас 3% ширины страницы (≈ 17,9 пункта).
+    expect(rect).toEqual({ left: 116, top: 100, width: 1490, height: 101 });
   });
 
   it('страница целиком в ручном режиме — всё изображение', () => {
@@ -120,7 +121,7 @@ describe('запас вырезки', () => {
   it('ключ кэша различает границы', () => {
     const [a] = groupIntoSegments([box(1, 10, 30)]);
     const [b] = withMargin([a!], 1, 20);
-    expect(segmentCacheKey(a!, 200)).toBe('1:10.0:30.0:::200');
+    expect(segmentCacheKey(a!, 200)).toBe('v2:1:10.0:30.0:::200');
     expect(segmentCacheKey(b!, 200)).not.toBe(segmentCacheKey(a!, 200));
   });
 });

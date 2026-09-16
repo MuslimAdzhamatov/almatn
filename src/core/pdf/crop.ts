@@ -61,6 +61,15 @@ const minNullable = (a: number | null, b: number | null) =>
 const maxNullable = (a: number | null, b: number | null) =>
   a === null || b === null ? null : Math.max(a, b);
 
+/**
+ * Запас по бокам, если границы строки найдены по чернилам (разбор по изображению, абзацы):
+ * крайние буквы не должны упираться в край картинки. Соседних строк сбоку нет, поэтому запас безопасен.
+ */
+export const SIDE_PADDING_SHARE = 0.03;
+
+/** Меняется при любом изменении правил вырезки — старые Telegram file_id из кэша не используются. */
+export const CROP_STYLE_VERSION = 2;
+
 /** Фрагмент в пунктах PDF → прямоугольник в пикселях отрендеренной страницы. */
 export function segmentPixelRect(
   segment: CropSegment,
@@ -70,8 +79,11 @@ export function segmentPixelRect(
   const sx = image.width / page.widthPt;
   const sy = image.height / page.heightPt;
   const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-  const left = clamp(Math.floor((segment.xLeft ?? 0) * sx), 0, image.width - 1);
-  const right = clamp(Math.ceil((segment.xRight ?? page.widthPt) * sx), left + 1, image.width);
+  const side = SIDE_PADDING_SHARE * page.widthPt;
+  const xLeft = segment.xLeft === null ? 0 : segment.xLeft - side;
+  const xRight = segment.xRight === null ? page.widthPt : segment.xRight + side;
+  const left = clamp(Math.floor(xLeft * sx), 0, image.width - 1);
+  const right = clamp(Math.ceil(xRight * sx), left + 1, image.width);
   const top = clamp(Math.floor(segment.yTop * sy), 0, image.height - 1);
   const bottom = clamp(Math.ceil(segment.yBottom * sy), top + 1, image.height);
   return { left, top, width: right - left, height: bottom - top };
@@ -108,6 +120,7 @@ export function withMargin(
 export function segmentCacheKey(segment: CropSegment, dpi: number): string {
   const r = (value: number | null) => (value === null ? '' : value.toFixed(1));
   return [
+    `v${CROP_STYLE_VERSION}`,
     segment.page,
     r(segment.yTop),
     r(segment.yBottom),

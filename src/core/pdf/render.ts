@@ -19,20 +19,29 @@ export async function imageSize(path: string): Promise<{ width: number; height: 
   return { width, height };
 }
 
+/** Белые поля вокруг каждой вырезки: текст не упирается в край картинки (доля ширины вырезки). */
+export const WHITE_BORDER_SHARE = 0.02;
+
 /**
- * Вырезает фрагмент в PNG. Telegram отклоняет фото с соотношением сторон больше maxAspect:1,
- * поэтому слишком узкая полоса (одна строка на всю ширину) дополняется белыми полями сверху и снизу.
+ * Вырезает фрагмент в PNG и добавляет белые поля. Сверху и снизу — только поля, а не расширенная
+ * вырезка, чтобы не захватить соседние строки. Telegram отклоняет фото с соотношением сторон
+ * больше maxAspect:1, поэтому узкая полоса (одна строка на всю ширину) дополняется полями выше.
  */
 export async function cropPng(path: string, rect: PixelRect, maxAspect = 20): Promise<Buffer> {
-  const image = sharp(path).extract(rect);
-  const minHeight = Math.ceil(rect.width / maxAspect);
-  if (rect.height < minHeight) {
-    const pad = minHeight - rect.height;
-    image.extend({
-      top: Math.floor(pad / 2),
-      bottom: Math.ceil(pad / 2),
+  const border = Math.max(8, Math.round(rect.width * WHITE_BORDER_SHARE));
+  const width = rect.width + 2 * border;
+  const height = Math.max(rect.height + 2 * border, Math.ceil(width / maxAspect));
+  const vertical = height - rect.height;
+  // Вырезку и поля делаем за два прохода: sharp применяет extract после extend, если звать их вместе.
+  const cropped = await sharp(path).extract(rect).toBuffer();
+  return sharp(cropped)
+    .extend({
+      left: border,
+      right: border,
+      top: Math.floor(vertical / 2),
+      bottom: Math.ceil(vertical / 2),
       background: '#ffffff',
-    });
-  }
-  return image.png({ compressionLevel: 9 }).toBuffer();
+    })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
 }
