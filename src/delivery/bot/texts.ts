@@ -528,7 +528,109 @@ export const texts = {
     },
   },
 
-  notReadyYet: 'Эта функция появится на следующих этапах разработки.',
+  library: {
+    noTexts:
+      'Текстов пока нет. Пришлите PDF или картинки страниц (лучше файлом) — я разберу текст и предложу составить план.',
+    uploadHint:
+      'Пришлите PDF-файл или картинки страниц (лучше файлом) — я разберу текст и предложу составить план.',
+    listTitle: '📚 Ваши тексты:',
+    listItem: (n: number, title: string, status: string) => `${n}. «${title}» — ${status}`,
+    percent: (percent: number, learned: string, total: string) =>
+      `${percent}% (${learned} из ${total})`,
+    noPlan: 'плана нет',
+    planDone: 'план завершён 🎉',
+    progressTitle: '📊 Прогресс',
+    textTitle: (title: string) => `📖 «${title}»`,
+    learned: (learned: string, total: string, percent: number) =>
+      `Выучено: ${learned} из ${total} (${percent}%).`,
+    paceDeadline: (perDay: string, deadline: string) => `Темп: ${perDay} в день, к ${deadline}.`,
+    pacePerDay: (perDay: string) => `Темп: ${perDay} в день.`,
+    endDate: (date: string) => `Заучивание закончится ${date}.`,
+    learningDone: (date: string | null) =>
+      `Заучивание закончено ✅${date ? `, последние повторы — до ${date}` : ''}.`,
+    completed: 'План завершён — все повторы пройдены 🎉',
+    reviews: (done: number, missed: number) =>
+      `Повторы: сделано ${done}${missed > 0 ? `, «не успел» — ${missed}` : ''}.`,
+    streak: (days: number) => `Дней без долгов подряд: ${days}.`,
+    noPlanLine: 'Плана пока нет.',
+    todayTitle: '📅 На сегодня',
+    pausedUntil: (when: string) => `⏸ Пауза до ${when} — сейчас ничего не приходит.`,
+    pausedManual: '⏸ Пауза — сейчас ничего не приходит. Продолжить: /pause.',
+    portionIssued: (range: string, learned: boolean) =>
+      `Новая порция: ${range} — ${learned ? 'выучена ✅' : 'ждёт отметки «Выучил»'}.`,
+    portionAt: (when: string) => `Новая порция придёт ${when}.`,
+    portionDebt: 'Новая порция придёт, когда будут сделаны долги.',
+    portionDone: 'Учить больше нечего — остались повторы.',
+    portionPaused: 'Новая порция — после паузы.',
+    portionSoon: 'Новая порция придёт в течение минуты.',
+    owed: (items: string) => `Не выполнено: ${items}.`,
+    owedRepeat: (ranges: string) => `повторить ${ranges}`,
+    owedLearn: (range: string) => `выучить ${range}`,
+    later: (ranges: string) => `Ещё сегодня повторить: ${ranges}.`,
+    clean: 'Долгов нет ✅',
+    deleteQuestion: (title: string) =>
+      `Удалить «${title}»? План, порции, повторы и файл будут удалены. Это нельзя отменить.`,
+    deleted: (title: string) => `🗑 Текст «${title}» удалён.`,
+    pickPace: 'Темп какого текста изменить?',
+    pickDelete: 'Какой текст удалить?',
+    wipe1: '⚠️ Удалить все ваши данные — тексты, файлы, планы, историю и настройки?',
+    wipe2: 'Точно удалить? Это нельзя отменить.',
+    wiped: 'Все данные удалены. Чтобы начать заново, отправьте /start.',
+    debtSent: 'Отправил 👆',
+    noDebt: 'Долгов нет',
+    buttons: {
+      upload: '➕ Загрузить новый текст',
+      plan: '📝 Составить план',
+      pace: '📈 Изменить темп',
+      delete: '🗑 Удалить',
+      deleteConfirm: '🗑 Да, удалить',
+      toList: '← К списку',
+      cancel: 'Отмена',
+      wipeYes: 'Да, удалить всё',
+      wipeFinal: 'Удалить навсегда',
+      sendDebt: (title: string) => `📋 Прислать долг: «${title}»`,
+    },
+  },
+
+  paceEdit: {
+    mode: (title: string, pace: string, remaining: string) =>
+      `📈 «${title}»: ${pace}\nЕщё не выдано: ${remaining}.\n\nКак задать новый темп? Уже выданные порции и их повторы не изменятся.`,
+    current: (perDay: string, deadline: string | null) =>
+      deadline ? `сейчас ${perDay} в день, к ${deadline}.` : `сейчас ${perDay} в день.`,
+    deadlineKind: (from: string) => `Как задать срок? Отсчёт — с ${from}.`,
+    deadlineDays: (from: string, maxDays: number) =>
+      `Сколько дней на оставшееся, считая с ${from}? Выберите или напишите число (до ${maxDays}).`,
+    deadlineMonths: (from: string) =>
+      `Сколько месяцев на оставшееся, считая с ${from}? Месяц — 30 дней. Выберите или напишите число.`,
+    deadlineDate: (from: string) =>
+      `К какой дате выучить оставшееся? Отсчёт — с ${from}. Напишите дату в формате ДД.ММ.ГГГГ.`,
+    preview: (title: string, perDay: string, end: string, lastReview: string) =>
+      `Новый темп «${title}»: ${perDay} в день.\nЗаучивание закончится ${end}, последние повторы — ${lastReview}.`,
+    saved: (title: string, perDay: string, end: string) =>
+      `✅ «${title}»: теперь ${perDay} в день, заучивание закончится ${end}.`,
+    nothingLeft: (title: string) => `По «${title}» уже всё выдано — менять темп нечего.`,
+    buttons: { save: '✅ Сохранить', change: '✏️ Изменить' },
+  },
+
+  help: [
+    '📘 Как пользоваться almatn',
+    '',
+    '1. Пришлите PDF или картинки страниц (лучше файлом). Бот разберёт текст на строки, бейты или абзацы и покажет сводку — проверьте и подтвердите.',
+    '2. Составьте план: что учить, темп (по сроку или по количеству в день) и выходные (до двух дней в неделю — в них не приходят новые порции).',
+    '3. Каждый рабочий день в выбранное время придёт порция картинками. Выучите и нажмите «Выучил».',
+    '4. Повторы идут через 12 часов, сутки, 3 дня, 2 недели и месяц после «Выучил». Всё, что пора повторить, приходит одним сообщением — отметьте «Повторил(а)».',
+    '5. Строгий режим: пока не сделаны повторы и не выучена прошлая порция, новая не придёт. Вечером и в утренний слот бот напомнит о долге. Если отстали от срока — предложит «Успеть к сроку» или «Сдвинуть срок».',
+    '6. Под картинками — «Захватить больше», «Ещё выше / ниже» (если текст обрезан) и «Пропустить…» (для ненужных строк).',
+    '',
+    'Команды:',
+    '/today — что на сегодня',
+    '/progress — прогресс по текстам',
+    '/texts — ваши тексты: план, темп, удаление',
+    '/pause — пауза или продолжить (сроки сдвинутся на время паузы)',
+    '/settings — часовой пояс, время, тихие часы, выходные, темп, удаление данных',
+    '/help — эта справка',
+  ].join('\n'),
+
   unknownMessage: 'Не понял сообщение. Список команд — в меню бота.',
   unexpectedError: 'Что-то пошло не так. Попробуйте ещё раз чуть позже.',
 } as const;

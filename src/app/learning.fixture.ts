@@ -480,6 +480,8 @@ export function setup(
   });
   const lastPortionDelivery = () => deliveries.filter((d) => d.kind === 'portion').at(-1)!;
   return {
+    store,
+    notifier,
     learning,
     reviewsApp,
     pause,

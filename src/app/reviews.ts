@@ -222,12 +222,12 @@ export function createReviews({
     },
 
     /**
-     * Сводка всего долга сейчас — после окончания паузы. Возвращает, сколько сообщений отправлено.
+     * Сводка всего долга сейчас — после окончания паузы или по кнопке в /today. Возвращает, сколько сообщений отправлено.
      */
-    async sendDebtNow(userId: bigint, now: Date): Promise<number> {
+    async sendDebtNow(userId: bigint, now: Date, textId?: number): Promise<number> {
       let sent = 0;
-      for (const ctx of await store.listOpenPlans()) {
-        if (ctx.user.userId !== userId) continue;
+      for (const ctx of await store.listOpenPlans(userId)) {
+        if (textId !== undefined && ctx.text.id !== textId) continue;
         const event = immediateEvent(now, ctx.user);
         const key = `batch:${ctx.text.id}:resume:${now.toISOString()}`;
         if (await dispatchText(ctx, now, event, key)) sent += 1;

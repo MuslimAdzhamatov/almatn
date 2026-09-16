@@ -2,7 +2,9 @@ import type { Bot } from 'grammy';
 import cron from 'node-cron';
 import { createImages } from './app/images.js';
 import { createLearning } from './app/learning.js';
+import { createLibrary } from './app/library.js';
 import { createOnboarding } from './app/onboarding.js';
+import { createPaceEdit } from './app/paceEdit.js';
 import { createPause } from './app/pause.js';
 import { createPlans } from './app/plans.js';
 import { createReviews } from './app/reviews.js';
@@ -17,6 +19,7 @@ import { cropPng, imageSize, loadGray } from './core/pdf/render.js';
 import { createDb } from './db/client.js';
 import { createDialogsRepository } from './db/repositories/dialogs.js';
 import { createCropCacheRepository, createLearningRepository } from './db/repositories/learning.js';
+import { createLibraryRepository } from './db/repositories/library.js';
 import { createPlansRepository } from './db/repositories/plans.js';
 import { createSettingsRepository } from './db/repositories/settings.js';
 import { createTextsRepository } from './db/repositories/texts.js';
@@ -99,6 +102,14 @@ async function main(): Promise<void> {
     dialogs,
     reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка паузы'),
   });
+  const library = createLibrary({
+    library: createLibraryRepository(db),
+    store: learningStore,
+    learning,
+    reviews,
+    files,
+  });
+  const paceEdit = createPaceEdit({ store: learningStore, dialogs, limits: limits.plan });
   const tick = createTick({
     withLock: (fn) => learningStore.withTickLock(fn),
     steps: [
@@ -124,6 +135,8 @@ async function main(): Promise<void> {
     reviews,
     pause,
     settings,
+    library,
+    paceEdit,
     files,
     logger,
   });

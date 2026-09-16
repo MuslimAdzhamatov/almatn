@@ -520,6 +520,46 @@ export interface SettingsStore {
   ): Promise<void>;
 }
 
+// ——— Тексты пользователя, прогресс, удаление (этап 7) ———
+
+export interface LibraryText {
+  id: number;
+  title: string;
+  unitName: UnitName;
+  parseStrategy: ParseStrategy;
+  totalLines: number;
+  /** Открытый план, иначе последний завершённый; null — плана не было. */
+  plan: PlanRecord | null;
+}
+
+export interface LibraryPortion {
+  lineStart: number;
+  lineEnd: number;
+  status: PortionStatusName;
+  sentAt: Date;
+  learnedAt: Date | null;
+}
+
+export interface LibraryReview {
+  dueAt: Date;
+  status: ReviewStatusName;
+  confirmedAt: Date | null;
+  lineStart: number;
+  lineEnd: number;
+}
+
+export interface LibraryStore {
+  /** Разобранные и подтверждённые тексты пользователя по порядку загрузки. */
+  listTexts(userId: bigint): Promise<LibraryText[]>;
+  portions(planId: number): Promise<LibraryPortion[]>;
+  /** Повторы плана (без learn_reminder и отменённых). */
+  reviews(planId: number): Promise<LibraryReview[]>;
+  /** Удаляет текст пользователя со всем, что к нему относится; false — текста нет. */
+  deleteText(userId: bigint, textId: number): Promise<boolean>;
+  /** Удаляет пользователя и все его данные; возвращает id удалённых текстов (для файлов). */
+  deleteUser(userId: bigint): Promise<number[]>;
+}
+
 // ——— Присланные файлы, которые ещё не стали текстом ———
 
 /**

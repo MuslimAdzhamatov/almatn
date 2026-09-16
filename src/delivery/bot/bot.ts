@@ -3,7 +3,9 @@ import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { Bot, GrammyError, HttpError } from 'grammy';
 import type { BotCommand } from 'grammy/types';
 import type { Learning } from '../../app/learning.js';
+import type { Library } from '../../app/library.js';
 import type { Onboarding } from '../../app/onboarding.js';
+import type { PaceEdit } from '../../app/paceEdit.js';
 import type { Pause } from '../../app/pause.js';
 import type { Plans } from '../../app/plans.js';
 import type { Reviews } from '../../app/reviews.js';
@@ -14,6 +16,7 @@ import type { UsersRepository } from '../../db/repositories/users.js';
 import type { Logger } from '../../lib/logger.js';
 import type { BotContext } from './context.js';
 import { registerLearning } from './handlers/learning.js';
+import { registerLibrary } from './handlers/library.js';
 import { registerOnboarding } from './handlers/onboarding.js';
 import { registerPace } from './handlers/pace.js';
 import { registerPause } from './handlers/pause.js';
@@ -32,6 +35,8 @@ export interface BotDeps {
   reviews: Reviews;
   pause: Pause;
   settings: Settings;
+  library: Library;
+  paceEdit: PaceEdit;
   files: FileStore;
   logger: Logger;
 }
@@ -75,9 +80,10 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
   registerPause(bot, deps.pause);
   registerPace(bot, deps.learning);
   registerSettings(bot, deps.settings);
-
-  bot.command(['today', 'progress', 'texts', 'help'], async (ctx) => {
-    await ctx.reply(texts.notReadyYet);
+  registerLibrary(bot, {
+    library: deps.library,
+    paceEdit: deps.paceEdit,
+    beginPlan: (ctx, textId) => plansHandlers?.begin(ctx, textId) ?? Promise.resolve(),
   });
 
   bot.on('message', async (ctx) => {

@@ -7,7 +7,7 @@ type UnitsStore = Pick<LearningStore, 'unitRows' | 'unitBoxes'>;
 
 /** Объединённые диапазоны без пропущенных единиц по краям (CLAUDE.md, раздел 5.1). */
 export async function mergedRanges(
-  store: UnitsStore,
+  store: Pick<LearningStore, 'unitRows'>,
   textId: number,
   ranges: readonly UnitRange[],
 ): Promise<MergedRange[]> {
