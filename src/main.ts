@@ -6,6 +6,7 @@ import { createOnboarding } from './app/onboarding.js';
 import { createPause } from './app/pause.js';
 import { createPlans } from './app/plans.js';
 import { createReviews } from './app/reviews.js';
+import { createSettings } from './app/settings.js';
 import type { PdfTools } from './app/ports.js';
 import { createTexts } from './app/texts.js';
 import { createTick } from './app/tick.js';
@@ -17,6 +18,7 @@ import { createDb } from './db/client.js';
 import { createDialogsRepository } from './db/repositories/dialogs.js';
 import { createCropCacheRepository, createLearningRepository } from './db/repositories/learning.js';
 import { createPlansRepository } from './db/repositories/plans.js';
+import { createSettingsRepository } from './db/repositories/settings.js';
 import { createTextsRepository } from './db/repositories/texts.js';
 import { createUploadsRepository } from './db/repositories/uploads.js';
 import { createUsersRepository } from './db/repositories/users.js';
@@ -52,17 +54,24 @@ async function main(): Promise<void> {
     tools: pdfTools,
     reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка обработки текста'),
   });
+  const learningStore = createLearningRepository(db);
+  const settings = createSettings({
+    users,
+    dialogs,
+    settings: createSettingsRepository(db),
+    learning: learningStore,
+  });
   const plans = createPlans({
     plans: createPlansRepository(db),
     texts: textsStore,
     users,
     dialogs,
     limits: limits.plan,
+    changeSendTime: settings.changeSendTime,
   });
 
   // Notifier получает api лениво: бот создаётся ниже, а сценариям Notifier нужен уже сейчас.
   let botApi: Bot['api'] | null = null;
-  const learningStore = createLearningRepository(db);
   const notifier = createNotifier(() => {
     if (!botApi) throw new Error('Бот ещё не создан');
     return botApi;
@@ -114,6 +123,7 @@ async function main(): Promise<void> {
     learning,
     reviews,
     pause,
+    settings,
     files,
     logger,
   });

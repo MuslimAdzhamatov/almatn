@@ -18,6 +18,7 @@ export function createUsersRepository(db: Db) {
           nightEnd: true,
           nightPolicy: true,
           eveningReminderTime: true,
+          learnReminderDelayMin: true,
           onboardedAt: true,
         },
       });

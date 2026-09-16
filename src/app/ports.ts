@@ -17,6 +17,7 @@ export interface UserSettings {
   nightEnd: string;
   nightPolicy: NightPolicy;
   eveningReminderTime: string;
+  learnReminderDelayMin: number;
   onboardedAt: Date | null;
 }
 
@@ -294,7 +295,8 @@ export interface LearningStore {
   withTickLock<T>(fn: () => Promise<T>): Promise<T | null>;
   listActivePlans(): Promise<PlanContext[]>;
   /** Планы, по которым ещё идут порции или повторы (active | learning_done). */
-  listOpenPlans(): Promise<PlanContext[]>;
+  /** userId — только планы этого пользователя. */
+  listOpenPlans(userId?: bigint): Promise<PlanContext[]>;
   /** Настройки пользователя для планировщика; null — пользователь не найден или не настроен. */
   learner(userId: bigint): Promise<LearnerSettings | null>;
   /** Пользователи на паузе с назначенным окончанием. */
@@ -383,7 +385,17 @@ export interface LearningStore {
   updatePlan(
     planId: number,
     patch: Partial<
-      Pick<PlanRecord, 'nextLine' | 'estimatedEndDate' | 'status' | 'unitsPerDay' | 'deadlineDate'>
+      Pick<
+        PlanRecord,
+        | 'nextLine'
+        | 'estimatedEndDate'
+        | 'status'
+        | 'unitsPerDay'
+        | 'deadlineDate'
+        | 'restDays'
+        | 'paceMode'
+        | 'deadlineInput'
+      >
     >,
   ): Promise<void>;
   countUnits(textId: number, from: number, to: number): Promise<number>;
@@ -488,6 +500,24 @@ export interface Notifier {
   sendNotice(userId: bigint, notice: Notice): Promise<SendResult>;
   /** Убрать кнопки под сообщением (порция заменена, план закончился). */
   clearButtons(userId: bigint, messageId: number): Promise<void>;
+}
+
+// ——— Настройки (этап 7) ———
+
+/** Выученная порция и её ещё не наступившие этапы — для пересчёта при смене пояса или времени. */
+export interface ChainToReschedule {
+  portionId: number;
+  anchorAt: Date;
+  stages: { id: number; stage: Exclude<ReviewStageName, 'learn_reminder'> }[];
+}
+
+export interface SettingsStore {
+  futureChains(userId: bigint, now: Date): Promise<ChainToReschedule[]>;
+  applyChain(
+    portionId: number,
+    anchorAt: Date,
+    updates: readonly { id: number; dueAt: Date }[],
+  ): Promise<void>;
 }
 
 // ——— Присланные файлы, которые ещё не стали текстом ———

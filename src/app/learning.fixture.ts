@@ -154,8 +154,10 @@ export function setup(
       }
     },
     listActivePlans: async () => (plan.status === 'active' ? [context()] : []),
-    listOpenPlans: async () =>
-      plan.status === 'active' || plan.status === 'learning_done' ? [context()] : [],
+    listOpenPlans: async (uid) =>
+      (plan.status === 'active' || plan.status === 'learning_done') && (uid ?? USER) === USER
+        ? [context()]
+        : [],
     planContext: async () => context(),
     textPlanContext: async () => context(),
     learner: async () => ({ ...user }),

@@ -153,6 +153,8 @@ export interface PlansDeps {
   dialogs: DialogStore;
   limits: PlanLimits;
   newToken?: () => string;
+  /** Смена времени новой порции с пересчётом повторов (app/settings). */
+  changeSendTime?: (userId: bigint, time: string, now: Date) => Promise<void>;
 }
 
 const DEADLINE_KINDS: readonly DeadlineKind[] = ['days', 'months', 'date'];
@@ -186,6 +188,7 @@ export function createPlans({
   dialogs,
   limits,
   newToken = () => randomBytes(4).toString('hex'),
+  changeSendTime,
 }: PlansDeps) {
   async function requireSettings(userId: bigint): Promise<Configured> {
     const settings = await users.getSettings(userId);
@@ -438,7 +441,9 @@ export function createPlans({
   ): Promise<PlanScreen> {
     const time = parseHHmm(input);
     if (!time) return { kind: 'send_time', token: s.draft.token, invalid: true };
-    await users.updateSettings(userId, { dailySendTime: formatHHmm(time) });
+    const dailySendTime = formatHHmm(time);
+    if (changeSendTime) await changeSendTime(userId, dailySendTime, now);
+    else await users.updateSettings(userId, { dailySendTime });
     return review(userId, s, now);
   }
 

@@ -71,10 +71,6 @@ export function createPause({
     });
   }
 
-  async function userPlans(userId: bigint) {
-    return (await store.listOpenPlans()).filter((ctx) => ctx.user.userId === userId);
-  }
-
   /** Служебное сообщение с записью в журнале; false — не дошло (запись удалена). */
   async function notify(
     userId: bigint,
@@ -139,7 +135,7 @@ export function createPause({
   /** Снять паузу: сдвиг сроков, сводка всего долга, порция — если пора. */
   async function finish(user: LearnerSettings, endedAt: Date, now: Date): Promise<ResumeResult> {
     const { userId } = user;
-    const plans = await userPlans(userId);
+    const plans = await store.listOpenPlans(userId);
     const days = user.pausedFrom ? pauseShiftDays(user.pausedFrom, endedAt, user.timezone) : 0;
     await store.setPause(userId, null, null);
     // Семь дней бездействия для автопаузы считаются от конца паузы.

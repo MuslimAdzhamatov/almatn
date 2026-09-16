@@ -7,6 +7,7 @@ import type { Onboarding } from '../../app/onboarding.js';
 import type { Pause } from '../../app/pause.js';
 import type { Plans } from '../../app/plans.js';
 import type { Reviews } from '../../app/reviews.js';
+import type { Settings } from '../../app/settings.js';
 import type { FileStore } from '../../app/ports.js';
 import type { Texts } from '../../app/texts.js';
 import type { UsersRepository } from '../../db/repositories/users.js';
@@ -18,6 +19,7 @@ import { registerPace } from './handlers/pace.js';
 import { registerPause } from './handlers/pause.js';
 import { registerPlans, type PlansHandlers } from './handlers/plans.js';
 import { registerReviews } from './handlers/reviews.js';
+import { registerSettings } from './handlers/settings.js';
 import { registerTexts } from './handlers/texts.js';
 import { texts } from './texts.js';
 
@@ -29,6 +31,7 @@ export interface BotDeps {
   learning: Learning;
   reviews: Reviews;
   pause: Pause;
+  settings: Settings;
   files: FileStore;
   logger: Logger;
 }
@@ -71,8 +74,9 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
   registerReviews(bot, deps.reviews);
   registerPause(bot, deps.pause);
   registerPace(bot, deps.learning);
+  registerSettings(bot, deps.settings);
 
-  bot.command(['today', 'progress', 'texts', 'settings', 'help'], async (ctx) => {
+  bot.command(['today', 'progress', 'texts', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);
   });
 

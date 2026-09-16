@@ -27,6 +27,8 @@ export function scheduleText(schedule: DailySchedule): string {
   ].join('\n');
 }
 
+export const zoneTitle = (zone: ZoneNow) => zoneName(zone);
+
 export const texts = {
   commands: {
     start: 'Начало работы',
@@ -470,6 +472,59 @@ export const texts = {
       },
       date: '📅 До даты…',
       manual: '⏸ Пока сам не продолжу',
+    },
+  },
+
+  settings: {
+    title: '⚙️ Настройки',
+    saved: '✅ Сохранено.',
+    zone: (zone: string, time: string) => `Часовой пояс: ${zone}, сейчас ${time}.`,
+    quiet: (start: string, end: string, move: boolean) =>
+      `Тихие часы: ${start}–${end}, ночные сообщения ${move ? `переносятся на ${end}` : 'приходят по часам'}.`,
+    learnDelay: (hours: string) => `Напоминание про неотмеченную порцию — через ${hours}.`,
+    rest: (days: string | null) =>
+      days === null ? 'Выходные: планов пока нет.' : `Выходные: ${days}.`,
+    restNone: 'нет',
+    shiftedTitle: 'Новые даты окончания заучивания:',
+    shiftedItem: (title: string, date: string) => `• «${title}» — ${date}`,
+    chooseTimezone: 'Выберите новый часовой пояс. Будущие повторы сдвинутся на те же местные часы.',
+    confirmTimezone: (zone: string, time: string) =>
+      `Часовой пояс: ${zone}. Сейчас у вас ${time}.\n\nСохранить?`,
+    sendTime: (current: string, invalid: boolean) =>
+      `${invalid ? 'Не получилось разобрать время. ' : ''}Сейчас новая порция приходит в ${current}. Выберите новое время или напишите его в формате ЧЧ:ММ. Будущие повторы сдвинутся вместе с ним.`,
+    quietMenu: (start: string, end: string, move: boolean) =>
+      `🌙 Тихие часы: ${start}–${end}. Сообщения, попавшие на ночь (кроме новой порции в выбранное вами время), ${move ? `переносятся на ${end}` : 'приходят по часам'}.`,
+    quietHours: (invalid: boolean) =>
+      `${invalid ? 'Не понял. ' : ''}Напишите тихие часы в виде 23:00-07:00.`,
+    evening: (current: string, invalid: boolean) =>
+      `${invalid ? 'Не получилось разобрать время. ' : ''}Напоминание о невыполненном приходит в ${current}. Выберите или напишите новое время (ЧЧ:ММ). Если оно ближе 3 часов к времени новой порции, в такие сутки напоминания не будет.`,
+    learnDelayMenu: (current: string) =>
+      `Если порция не отмечена, напоминание придёт через ${current}. Через сколько напоминать?`,
+    restDays:
+      'Выходные — дни без новых порций (не больше двух). Повторы в выходные приходят как обычно. Изменение действует на все идущие планы.',
+    noPlans: 'Выходные задаются для планов, а планов пока нет.',
+    hours: (minutes: number) =>
+      minutes % 60 === 0
+        ? `${minutes / 60} ч`
+        : minutes < 60
+          ? `${minutes} мин`
+          : `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`,
+    buttons: {
+      timezone: '🌍 Часовой пояс',
+      time: '🕕 Время порции',
+      quiet: '🌙 Тихие часы',
+      evening: '🔔 Вечернее напоминание',
+      delay: '⏰ Напоминание про порцию',
+      rest: '📅 Выходные',
+      pace: '📈 Темп текста',
+      pause: '⏸ Пауза',
+      deleteText: '🗑 Удалить текст',
+      deleteAll: '⚠️ Удалить все данные',
+      back: '← Назад',
+      save: '✅ Сохранить',
+      quietKeep: 'Присылать по часам',
+      quietMove: (end: string) => `Переносить на ${end}`,
+      quietHours: '✏️ Изменить часы',
     },
   },
 

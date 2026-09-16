@@ -13,6 +13,7 @@ function setup(initial: Partial<UserSettings> = {}) {
     nightEnd: '07:00',
     nightPolicy: 'keep',
     eveningReminderTime: '21:00',
+    learnReminderDelayMin: 120,
     onboardedAt: null,
     ...initial,
   };

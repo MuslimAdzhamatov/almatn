@@ -140,10 +140,11 @@ export function createLearningRepository(db: Db): LearningStore {
     portionId_stage: { portionId, stage: 'learn_reminder' as const },
   });
 
-  async function listPlans(statuses: PlanStatus[]) {
+  async function listPlans(statuses: PlanStatus[], userId?: bigint) {
     const rows = await db.plan.findMany({
       where: {
         status: { in: statuses },
+        ...(userId !== undefined && { userId }),
         text: { status: 'ready' },
         user: { onboardedAt: { not: null }, blockedAt: null },
       },
@@ -167,7 +168,7 @@ export function createLearningRepository(db: Db): LearningStore {
 
     listActivePlans: () => listPlans(['active']),
 
-    listOpenPlans: () => listPlans(['active', 'learning_done']),
+    listOpenPlans: (userId) => listPlans(['active', 'learning_done'], userId),
 
     async learner(userId) {
       const user = await db.user.findUnique({ where: { id: userId } });

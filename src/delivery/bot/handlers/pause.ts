@@ -37,6 +37,11 @@ export function registerPause(bot: Bot<BotContext>, pause: Pause) {
     await show(ctx, await pause.open(ctx.user.id, new Date()), false);
   });
 
+  // «⏸ Пауза» в /settings.
+  bot.callbackQuery('mg:pause', async (ctx) => {
+    await show(ctx, await pause.open(ctx.user.id, new Date()), true);
+  });
+
   bot.callbackQuery(RESUME_CALLBACK, async (ctx) => {
     await show(ctx, await pause.resume(ctx.user.id, new Date()), true);
   });

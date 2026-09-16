@@ -59,6 +59,7 @@ function setup() {
     nightEnd: '07:00',
     nightPolicy: 'keep',
     eveningReminderTime: '21:00',
+    learnReminderDelayMin: 120,
     onboardedAt: NOW,
   };
   const users: UserSettingsStore = {
