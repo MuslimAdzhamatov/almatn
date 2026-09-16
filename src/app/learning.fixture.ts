@@ -5,8 +5,11 @@ import {
   BATCH_KINDS,
   type BatchView,
   type DeliveryRecord,
+  type DialogSnapshot,
+  type DialogStore,
   type LearnerSettings,
   type LearningStore,
+  type Notice,
   type Notifier,
   type PlanContext,
   type PlanRecord,
@@ -155,6 +158,16 @@ export function setup(
       plan.status === 'active' || plan.status === 'learning_done' ? [context()] : [],
     planContext: async () => context(),
     textPlanContext: async () => context(),
+    learner: async () => ({ ...user }),
+    listTimedPauses: async () =>
+      user.pausedFrom && user.pausedUntil && !user.blockedAt ? [{ ...user }] : [],
+    hasResumeBatchSince: async (_t, since) =>
+      deliveries.some(
+        (d) =>
+          d.dedupeKey.startsWith('batch:10:resume:') &&
+          ['sent', 'replaced'].includes(d.status) &&
+          d.slotAt >= since,
+      ),
     lastPortion: async () => portions.at(-1) ?? null,
     getPortion: async (pid) => portions.find((p) => p.id === pid) ?? null,
     unlearnedPortion: async () => portions.find((p) => p.status === 'sent') ?? null,
@@ -342,6 +355,9 @@ export function setup(
     setBlocked: async (_u, when) => {
       user.blockedAt = when;
     },
+    resetActivity: async (_u, when) => {
+      user.lastActivityAt = when;
+    },
     setPause: async (_u, from, until) => {
       user.pausedFrom = from;
       user.pausedUntil = from && until;
@@ -352,6 +368,7 @@ export function setup(
     kind: string;
     view?: PortionView;
     batch?: BatchView;
+    notice?: Notice;
     lines?: [number, number][];
   }[] = [];
   const cleared: number[] = [];
@@ -395,9 +412,9 @@ export function setup(
       return r;
     },
     sendText: async () => result(0),
-    sendAutoPause: async () => {
+    sendNotice: async (_u, notice) => {
       const r = result(0);
-      if (r.ok) sent.push({ kind: 'autopause' });
+      if (r.ok) sent.push({ kind: notice.kind, notice });
       return r;
     },
     clearButtons: async (_u, mid) => void cleared.push(mid),
@@ -435,18 +452,25 @@ export function setup(
   const reportError = (err: unknown) => void errors.push(err);
   const learning = createLearning({ store, notifier, images, reportError });
   const reviewsApp = createReviews({ store, notifier, images, learning, reportError });
+  const dialogState = new Map<bigint, DialogSnapshot>();
+  const dialogs: DialogStore = {
+    get: async (uid) => dialogState.get(uid) ?? null,
+    set: async (uid, dialog) => void dialogState.set(uid, dialog),
+    clear: async (uid) => void dialogState.delete(uid),
+  };
   const pause = createPause({
     store,
     notifier,
     images,
     learning,
     reviews: reviewsApp,
+    dialogs,
     reportError,
   });
   const tick = createTick({
     withLock: store.withTickLock,
     steps: [
-      { name: 'autopause', run: pause.runDue },
+      { name: 'pause', run: pause.runDue },
       { name: 'reviews', run: reviewsApp.runDue },
       { name: 'portions', run: learning.runDue },
     ],
@@ -457,6 +481,7 @@ export function setup(
     learning,
     reviewsApp,
     pause,
+    dialogs,
     tick,
     plan,
     user,

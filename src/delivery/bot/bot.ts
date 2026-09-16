@@ -72,7 +72,7 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
   registerPause(bot, deps.pause);
   registerPace(bot, deps.learning);
 
-  bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
+  bot.command(['today', 'progress', 'texts', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);
   });
 

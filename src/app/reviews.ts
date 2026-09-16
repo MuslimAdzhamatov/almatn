@@ -212,6 +212,8 @@ export function createReviews({
         if (ctx.user.blockedAt || isPaused(ctx.user, now)) continue;
         try {
           const event = latestEvent(now, ctx.user);
+          // Сводка после паузы уже содержит весь долг этого события.
+          if (await store.hasResumeBatchSince(ctx.text.id, event.at)) continue;
           await dispatchText(ctx, now, event, batchDedupeKey(ctx.text.id, event));
         } catch (err) {
           reportError(err, { planId: ctx.plan.id });

@@ -2,6 +2,7 @@ import {
   BATCH_KINDS,
   type CropCacheStore,
   type DeliveryRecord,
+  type LearnerSettings,
   type LearningStore,
   type PlanContext,
   type PortionRecord,
@@ -34,8 +35,27 @@ type PlanRow = Plan & { text: Text; user: User };
 
 const planInclude = { text: true, user: true } as const;
 
-function toContext({ text, user, ...plan }: PlanRow): PlanContext | null {
+function toLearner(user: User): LearnerSettings | null {
   if (!user.timezone || !user.dailySendTime) return null;
+  return {
+    userId: user.id,
+    timezone: user.timezone,
+    dailySendTime: user.dailySendTime,
+    eveningReminderTime: user.eveningReminderTime,
+    nightStart: user.nightStart,
+    nightEnd: user.nightEnd,
+    nightPolicy: user.nightPolicy,
+    learnReminderDelayMin: user.learnReminderDelayMin,
+    pausedFrom: user.pausedFrom,
+    pausedUntil: user.pausedUntil,
+    blockedAt: user.blockedAt,
+    lastActivityAt: user.lastActivityAt ?? user.createdAt,
+  };
+}
+
+function toContext({ text, user, ...plan }: PlanRow): PlanContext | null {
+  const learner = toLearner(user);
+  if (!learner) return null;
   return {
     plan: toPlanRecord(plan),
     text: {
@@ -47,20 +67,7 @@ function toContext({ text, user, ...plan }: PlanRow): PlanContext | null {
       filePath: text.filePath,
       totalLines: text.totalLines,
     },
-    user: {
-      userId: user.id,
-      timezone: user.timezone,
-      dailySendTime: user.dailySendTime,
-      eveningReminderTime: user.eveningReminderTime,
-      nightStart: user.nightStart,
-      nightEnd: user.nightEnd,
-      nightPolicy: user.nightPolicy,
-      learnReminderDelayMin: user.learnReminderDelayMin,
-      pausedFrom: user.pausedFrom,
-      pausedUntil: user.pausedUntil,
-      blockedAt: user.blockedAt,
-      lastActivityAt: user.lastActivityAt ?? user.createdAt,
-    },
+    user: learner,
   };
 }
 
@@ -161,6 +168,36 @@ export function createLearningRepository(db: Db): LearningStore {
     listActivePlans: () => listPlans(['active']),
 
     listOpenPlans: () => listPlans(['active', 'learning_done']),
+
+    async learner(userId) {
+      const user = await db.user.findUnique({ where: { id: userId } });
+      return user && user.onboardedAt ? toLearner(user) : null;
+    },
+
+    async listTimedPauses() {
+      const rows = await db.user.findMany({
+        where: {
+          pausedFrom: { not: null },
+          pausedUntil: { not: null },
+          onboardedAt: { not: null },
+          blockedAt: null,
+        },
+      });
+      return rows.map(toLearner).filter((user) => user !== null);
+    },
+
+    async hasResumeBatchSince(textId, at) {
+      const found = await db.delivery.findFirst({
+        where: {
+          textId,
+          status: { in: ['sent', 'replaced'] },
+          dedupeKey: { startsWith: `batch:${textId}:resume:` },
+          slotAt: { gte: at },
+        },
+        select: { id: true },
+      });
+      return found !== null;
+    },
 
     async textPlanContext(textId) {
       const row = await db.plan.findFirst({
@@ -471,6 +508,10 @@ export function createLearningRepository(db: Db): LearningStore {
 
     async setBlocked(userId, at) {
       await db.user.update({ where: { id: userId }, data: { blockedAt: at } });
+    },
+
+    async resetActivity(userId, at) {
+      await db.user.update({ where: { id: userId }, data: { lastActivityAt: at } });
     },
 
     async setPause(userId, from, until) {

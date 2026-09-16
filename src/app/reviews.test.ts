@@ -413,7 +413,10 @@ describe('автопауза', () => {
     expect(t.sent.filter((s) => s.kind === 'autopause')).toHaveLength(1);
 
     const resumeAt = at('2026-09-24T10:00:00Z');
-    expect(await t.pause.resume(USER, resumeAt)).toEqual({ kind: 'resumed', debtMessages: 1 });
+    expect(await t.pause.resume(USER, resumeAt)).toMatchObject({
+      kind: 'resumed',
+      debtMessages: 1,
+    });
     expect(t.user.pausedFrom).toBeNull();
     expect(batches(t).at(-1)).toMatchObject({
       batch: { kind: 'debt', reviews: [{ lineStart: 1, lineEnd: 3 }] },
@@ -442,7 +445,7 @@ describe('автопауза', () => {
   it('после продолжения без долга порция приходит по правилу «сейчас или в слот»', async () => {
     const t = setup();
     t.user.pausedFrom = at('2026-09-15T00:00:00Z');
-    expect(await t.pause.resume(USER, minutes(MAIN, 60))).toEqual({
+    expect(await t.pause.resume(USER, minutes(MAIN, 60))).toMatchObject({
       kind: 'resumed',
       debtMessages: 0,
     });

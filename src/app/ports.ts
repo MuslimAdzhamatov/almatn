@@ -295,6 +295,12 @@ export interface LearningStore {
   listActivePlans(): Promise<PlanContext[]>;
   /** Планы, по которым ещё идут порции или повторы (active | learning_done). */
   listOpenPlans(): Promise<PlanContext[]>;
+  /** Настройки пользователя для планировщика; null — пользователь не найден или не настроен. */
+  learner(userId: bigint): Promise<LearnerSettings | null>;
+  /** Пользователи на паузе с назначенным окончанием. */
+  listTimedPauses(): Promise<LearnerSettings[]>;
+  /** Была ли по тексту сводка «после паузы» не раньше момента at — она уже содержит весь долг. */
+  hasResumeBatchSince(textId: number, at: Date): Promise<boolean>;
   planContext(planId: number): Promise<PlanContext | null>;
   /** Открытый план текста. */
   textPlanContext(textId: number): Promise<PlanContext | null>;
@@ -384,6 +390,8 @@ export interface LearningStore {
   setBlocked(userId: bigint, at: Date): Promise<void>;
   /** Пауза пользователя: until = null — до ручного продолжения; from = null — паузы нет. */
   setPause(userId: bigint, from: Date | null, until: Date | null): Promise<void>;
+  /** Отсчёт бездействия для автопаузы начинается заново (после окончания паузы). */
+  resetActivity(userId: bigint, at: Date): Promise<void>;
 }
 
 /** Картинка к отправке — уже известный Telegram file_id или PNG; подпись — по номерам единиц. */
@@ -420,6 +428,17 @@ export interface PortionView extends UnitLabel {
   /** Порция пришла взамен пропущенной. */
   replaced: boolean;
 }
+
+/** Срок плана после сдвига (пауза). */
+export interface PlanShift {
+  title: string;
+  endDate: string | null;
+}
+
+export type Notice =
+  | { kind: 'autopause' }
+  | { kind: 'pause_warning'; until: Date; timezone: string }
+  | { kind: 'pause_ended'; debtMessages: number; shifted: PlanShift[] };
 
 export type BatchKind = 'review' | 'debt' | 'evening';
 
@@ -465,8 +484,8 @@ export interface Notifier {
     pictures: readonly NotifierPicture[],
   ): Promise<SendResult>;
   sendText(userId: bigint, text: string): Promise<SendResult>;
-  /** Автопауза: сообщение с кнопкой «Продолжить». */
-  sendAutoPause(userId: bigint): Promise<SendResult>;
+  /** Служебное сообщение без картинок: автопауза, пауза заканчивается, пауза закончилась. */
+  sendNotice(userId: bigint, notice: Notice): Promise<SendResult>;
   /** Убрать кнопки под сообщением (порция заменена, план закончился). */
   clearButtons(userId: bigint, messageId: number): Promise<void>;
 }

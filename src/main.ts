@@ -87,12 +87,13 @@ async function main(): Promise<void> {
     images,
     learning,
     reviews,
-    reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка автопаузы'),
+    dialogs,
+    reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка паузы'),
   });
   const tick = createTick({
     withLock: (fn) => learningStore.withTickLock(fn),
     steps: [
-      { name: 'autopause', run: pause.runDue },
+      { name: 'pause', run: pause.runDue },
       { name: 'reviews', run: reviews.runDue },
       { name: 'portions', run: learning.runDue },
     ],
