@@ -112,7 +112,7 @@ export const texts = {
         `Часовой пояс: ${zoneName(zone)}.`,
         scheduleText(schedule),
         '',
-        'Изменить это можно будет в /settings. Следующий шаг — загрузка PDF с текстом (появится в ближайшем обновлении).',
+        'Изменить это можно будет в /settings. Теперь пришлите PDF или картинки страниц с текстом, который хотите выучить.',
       ].join('\n'),
 
     summary: (zone: ZoneNow, schedule: DailySchedule) =>
@@ -122,7 +122,7 @@ export const texts = {
         `Часовой пояс: ${zoneName(zone)}.`,
         scheduleText(schedule),
         '',
-        'Загрузка PDF появится в ближайшем обновлении.',
+        'Чтобы добавить текст, пришлите PDF или картинки страниц.',
       ].join('\n'),
 
     staleButton: 'Эта кнопка уже неактуальна',
