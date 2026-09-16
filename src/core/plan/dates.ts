@@ -26,6 +26,11 @@ export function addDays(date: IsoDate, days: number): IsoDate {
   return toIso(toDateTime(date).plus({ days }));
 }
 
+/** Та же дата через N календарных месяцев (31.01 + 1 → 28/29.02). */
+export function addMonths(date: IsoDate, months: number): IsoDate {
+  return toIso(toDateTime(date).plus({ months }));
+}
+
 /** Сколько дней от a до b (b − a). */
 export function diffDays(a: IsoDate, b: IsoDate): number {
   return Math.round(toDateTime(b).diff(toDateTime(a), 'days').days);

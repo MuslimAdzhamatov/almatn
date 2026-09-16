@@ -125,6 +125,51 @@ export interface TextsStore {
   firstLines(textId: number, count: number): Promise<LineBox[]>;
 }
 
+// ——— Планы заучивания ———
+
+export type PaceMode = 'deadline' | 'per_day';
+export type PlanStatus = 'active' | 'learning_done' | 'completed' | 'cancelled';
+
+/** Даты плана — местные календарные даты «ГГГГ-ММ-ДД» (core/plan/dates). */
+export interface PlanRecord {
+  id: number;
+  textId: number;
+  userId: bigint;
+  lineFrom: number;
+  lineTo: number;
+  unitsPerDay: number;
+  paceMode: PaceMode;
+  startDate: string;
+  deadlineDate: string | null;
+  deadlineInput: string | null;
+  restDays: number[];
+  status: PlanStatus;
+  nextLine: number;
+  estimatedEndDate: string | null;
+}
+
+export type NewPlan = Omit<PlanRecord, 'id' | 'status'>;
+
+/** Открытый план (active | learning_done) другого текста — для предупреждения о наложении. */
+export interface OpenPlan extends PlanRecord {
+  textTitle: string;
+}
+
+/** Неподтверждённый повтор выданной порции (кроме learn_reminder). */
+export interface ScheduledReview {
+  dueAt: Date;
+  units: number;
+}
+
+export interface PlansStore {
+  /** null — у текста уже есть открытый план (частичный уникальный индекс). */
+  create(plan: NewPlan): Promise<PlanRecord | null>;
+  findOpenByText(textId: number): Promise<PlanRecord | null>;
+  listOpenByUser(userId: bigint): Promise<OpenPlan[]>;
+  /** Повторы пользователя со статусом pending | sent | missed, кроме плана этого текста. */
+  scheduledReviews(userId: bigint, exceptTextId: number): Promise<ScheduledReview[]>;
+}
+
 // ——— Присланные файлы, которые ещё не стали текстом ———
 
 /**
