@@ -17,6 +17,7 @@ import {
   type ReviewStatusName,
   type SendResult,
 } from './ports.js';
+import { createPause } from './pause.js';
 import { createReviews } from './reviews.js';
 import { createTick } from './tick.js';
 
@@ -54,6 +55,7 @@ export function setup(
     pausedFrom: null,
     pausedUntil: null,
     blockedAt: null,
+    lastActivityAt: at('2026-09-15T12:00:00Z'),
   };
   const plan: PlanRecord = {
     id: 1,
@@ -340,6 +342,10 @@ export function setup(
     setBlocked: async (_u, when) => {
       user.blockedAt = when;
     },
+    setPause: async (_u, from, until) => {
+      user.pausedFrom = from;
+      user.pausedUntil = from && until;
+    },
   };
 
   const sent: {
@@ -389,6 +395,11 @@ export function setup(
       return r;
     },
     sendText: async () => result(0),
+    sendAutoPause: async () => {
+      const r = result(0);
+      if (r.ok) sent.push({ kind: 'autopause' });
+      return r;
+    },
     clearButtons: async (_u, mid) => void cleared.push(mid),
   };
 
@@ -424,9 +435,18 @@ export function setup(
   const reportError = (err: unknown) => void errors.push(err);
   const learning = createLearning({ store, notifier, images, reportError });
   const reviewsApp = createReviews({ store, notifier, images, learning, reportError });
+  const pause = createPause({
+    store,
+    notifier,
+    images,
+    learning,
+    reviews: reviewsApp,
+    reportError,
+  });
   const tick = createTick({
     withLock: store.withTickLock,
     steps: [
+      { name: 'autopause', run: pause.runDue },
       { name: 'reviews', run: reviewsApp.runDue },
       { name: 'portions', run: learning.runDue },
     ],
@@ -436,6 +456,7 @@ export function setup(
   return {
     learning,
     reviewsApp,
+    pause,
     tick,
     plan,
     user,

@@ -4,6 +4,7 @@ import { Bot, GrammyError, HttpError } from 'grammy';
 import type { BotCommand } from 'grammy/types';
 import type { Learning } from '../../app/learning.js';
 import type { Onboarding } from '../../app/onboarding.js';
+import type { Pause } from '../../app/pause.js';
 import type { Plans } from '../../app/plans.js';
 import type { Reviews } from '../../app/reviews.js';
 import type { FileStore } from '../../app/ports.js';
@@ -13,6 +14,7 @@ import type { Logger } from '../../lib/logger.js';
 import type { BotContext } from './context.js';
 import { registerLearning } from './handlers/learning.js';
 import { registerOnboarding } from './handlers/onboarding.js';
+import { registerPause } from './handlers/pause.js';
 import { registerPlans, type PlansHandlers } from './handlers/plans.js';
 import { registerReviews } from './handlers/reviews.js';
 import { registerTexts } from './handlers/texts.js';
@@ -25,6 +27,7 @@ export interface BotDeps {
   plans: Plans;
   learning: Learning;
   reviews: Reviews;
+  pause: Pause;
   files: FileStore;
   logger: Logger;
 }
@@ -65,6 +68,7 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
   plansHandlers = registerPlans(bot, deps.plans, deps.learning);
   registerLearning(bot, deps.learning);
   registerReviews(bot, deps.reviews);
+  registerPause(bot, deps.pause);
 
   bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);

@@ -5,6 +5,7 @@ import {
   debtDays,
   debtSince,
   eventsOfDay,
+  immediateEvent,
   isQuietDebt,
   latestEvent,
   shouldAutoPause,
@@ -85,6 +86,15 @@ describe('последнее наступившее событие', () => {
     ['2026-09-17T03:00:00Z', 'main', '2026-09-17'],
   ])('%s → %s', (now, kind, day) => {
     expect(latestEvent(at(now), s)).toMatchObject({ kind, day });
+  });
+
+  it('внеочередная сводка — как основной слот в момент now', () => {
+    expect(immediateEvent(at('2026-09-16T02:00:00Z'), s)).toEqual({
+      kind: 'main',
+      day: '2026-09-15',
+      at: at('2026-09-16T02:00:00Z'),
+      sendAt: at('2026-09-16T02:00:00Z'),
+    });
   });
 
   it('догон после простоя — одно событие с одним ключом', () => {

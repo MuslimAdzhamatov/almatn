@@ -35,7 +35,7 @@ export async function rememberPictures(
  */
 export async function settleSend(
   { store, images, reportError }: SendingDeps,
-  target: { userId: bigint; textId: number; deliveryId: number },
+  target: { userId: bigint; textId: number | null; deliveryId: number },
   result: SendResult,
   pictures: readonly OutgoingPicture[],
   now: Date,
@@ -47,7 +47,7 @@ export async function settleSend(
       result.buttonsMessageId,
       now,
     );
-    await rememberPictures(images, target.textId, pictures, result);
+    if (target.textId !== null) await rememberPictures(images, target.textId, pictures, result);
     return true;
   }
   if (result.reason === 'blocked') await store.setBlocked(target.userId, now);

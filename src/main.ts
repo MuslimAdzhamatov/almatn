@@ -3,6 +3,7 @@ import cron from 'node-cron';
 import { createImages } from './app/images.js';
 import { createLearning } from './app/learning.js';
 import { createOnboarding } from './app/onboarding.js';
+import { createPause } from './app/pause.js';
 import { createPlans } from './app/plans.js';
 import { createReviews } from './app/reviews.js';
 import type { PdfTools } from './app/ports.js';
@@ -80,9 +81,18 @@ async function main(): Promise<void> {
     learning,
     reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка сводного повтора'),
   });
+  const pause = createPause({
+    store: learningStore,
+    notifier,
+    images,
+    learning,
+    reviews,
+    reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка автопаузы'),
+  });
   const tick = createTick({
     withLock: (fn) => learningStore.withTickLock(fn),
     steps: [
+      { name: 'autopause', run: pause.runDue },
       { name: 'reviews', run: reviews.runDue },
       { name: 'portions', run: learning.runDue },
     ],
@@ -102,6 +112,7 @@ async function main(): Promise<void> {
     plans,
     learning,
     reviews,
+    pause,
     files,
     logger,
   });

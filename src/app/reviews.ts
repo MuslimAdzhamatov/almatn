@@ -2,6 +2,7 @@ import {
   batchContent,
   batchDedupeKey,
   debtSince,
+  immediateEvent,
   isQuietDebt,
   latestEvent,
   type SlotEvent,
@@ -119,15 +120,21 @@ export function createReviews({
     }
   }
 
-  async function dispatchText(ctx: PlanContext, now: Date) {
+  async function dispatchText(
+    ctx: PlanContext,
+    now: Date,
+    event: SlotEvent,
+    dedupeKey: string,
+  ): Promise<boolean> {
     const { user, text, plan } = ctx;
-    const event = latestEvent(now, user);
     const owed = await store.textReviews(text.id);
     const unlearned = plan.status === 'active' ? await store.unlearnedPortion(plan.id) : null;
     // Долг тянется 3 плановых суток — только сообщение основного слота.
-    if (event.kind !== 'main' && isQuietDebt(debtSince(now, owed, unlearned), now, user)) return;
+    if (event.kind !== 'main' && isQuietDebt(debtSince(now, owed, unlearned), now, user)) {
+      return false;
+    }
     const content = batchContent({ now, event, reviews: owed, unlearned });
-    if (!content) return;
+    if (!content) return false;
 
     const deliveryId = await store.createDelivery({
       userId: user.userId,
@@ -135,9 +142,9 @@ export function createReviews({
       portionId: content.portionId,
       kind: event.kind === 'evening' ? 'debt_reminder' : 'review_batch',
       slotAt: event.at,
-      dedupeKey: batchDedupeKey(text.id, event),
+      dedupeKey,
     });
-    if (deliveryId === null) return;
+    if (deliveryId === null) return false;
 
     let ok = false;
     try {
@@ -146,7 +153,7 @@ export function createReviews({
       const units = await deliveryUnitsFor(text.id, included, portion);
       if (units.all.length === 0) {
         await store.deleteDelivery(deliveryId);
-        return;
+        return false;
       }
       const pictures = await images.pictures(text, await boxesIn(store, text.id, units.all));
       const view: BatchView = {
@@ -172,6 +179,7 @@ export function createReviews({
       reportError(err, { textId: text.id, event: event.kind });
     }
     if (!ok) await store.deleteDelivery(deliveryId);
+    return ok;
   }
 
   async function deliveryUnitsFor(
@@ -201,11 +209,26 @@ export function createReviews({
       for (const ctx of await store.listOpenPlans()) {
         if (ctx.user.blockedAt || isPaused(ctx.user, now)) continue;
         try {
-          await dispatchText(ctx, now);
+          const event = latestEvent(now, ctx.user);
+          await dispatchText(ctx, now, event, batchDedupeKey(ctx.text.id, event));
         } catch (err) {
           reportError(err, { planId: ctx.plan.id });
         }
       }
+    },
+
+    /**
+     * Сводка всего долга сейчас — после окончания паузы. Возвращает, сколько сообщений отправлено.
+     */
+    async sendDebtNow(userId: bigint, now: Date): Promise<number> {
+      let sent = 0;
+      for (const ctx of await store.listOpenPlans()) {
+        if (ctx.user.userId !== userId) continue;
+        const event = immediateEvent(now, ctx.user);
+        const key = `batch:${ctx.text.id}:resume:${now.toISOString()}`;
+        if (await dispatchText(ctx, now, event, key)) sent += 1;
+      }
+      return sent;
     },
 
     /** «Повторил(а)» / «Не успел(а)»: ответ на все ещё не отмеченные повторы этой сводки. */

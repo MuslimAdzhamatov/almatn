@@ -59,6 +59,7 @@ function toContext({ text, user, ...plan }: PlanRow): PlanContext | null {
       pausedFrom: user.pausedFrom,
       pausedUntil: user.pausedUntil,
       blockedAt: user.blockedAt,
+      lastActivityAt: user.lastActivityAt ?? user.createdAt,
     },
   };
 }
@@ -470,6 +471,13 @@ export function createLearningRepository(db: Db): LearningStore {
 
     async setBlocked(userId, at) {
       await db.user.update({ where: { id: userId }, data: { blockedAt: at } });
+    },
+
+    async setPause(userId, from, until) {
+      await db.user.update({
+        where: { id: userId },
+        data: { pausedFrom: from, pausedUntil: from && until },
+      });
     },
   };
 }

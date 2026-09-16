@@ -3,6 +3,7 @@ import type { Notifier, NotifierPicture, SendResult, UnitLabel } from '../../app
 import { sendImages } from './images.js';
 import type { RenderedMessage } from './views/onboarding.js';
 import { pictureCaption, portionMessage, reminderMessage } from './views/learning.js';
+import { autoPauseMessage } from './views/pause.js';
 import { batchMessage } from './views/reviews.js';
 
 // Отправка сообщений планировщиком (CLAUDE.md, раздел 5.6): сценарии не знают про Telegram.
@@ -81,6 +82,17 @@ export function createNotifier(api: () => Api): Notifier {
       attempt(async () => {
         const message = await api().sendMessage(Number(userId), text);
         return { messageIds: [message.message_id], buttonsMessageId: null, fileIds: [] };
+      }),
+
+    sendAutoPause: (userId) =>
+      attempt(async () => {
+        const { text, keyboard } = autoPauseMessage();
+        const message = await api().sendMessage(Number(userId), text, { reply_markup: keyboard });
+        return {
+          messageIds: [message.message_id],
+          buttonsMessageId: message.message_id,
+          fileIds: [],
+        };
       }),
 
     async clearButtons(userId, messageId) {

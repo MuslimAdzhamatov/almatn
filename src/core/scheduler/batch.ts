@@ -60,6 +60,11 @@ export function latestEvent(now: Date, s: BatchRules): SlotEvent {
     .at(-1)!;
 }
 
+/** Внеочередная сводка всего долга (после паузы): как в основной слот, но в момент now. */
+export function immediateEvent(now: Date, s: BatchRules): SlotEvent {
+  return { kind: 'main', day: planningDayOf(now, s), at: now, sendAt: now };
+}
+
 /** Ключ отправки: одно сообщение на текст за событие. */
 export function batchDedupeKey(textId: number, event: SlotEvent): string {
   return `batch:${textId}:${event.kind}:${event.at.toISOString()}`;

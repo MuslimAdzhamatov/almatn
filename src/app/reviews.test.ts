@@ -390,3 +390,62 @@ describe('закрытие цепочки', () => {
     expect(t.portions[0]?.status).toBe('learned');
   });
 });
+
+describe('автопауза', () => {
+  const WEEK_LATER = at('2026-09-22T12:00:00Z');
+
+  it('7 дней без активности при долге — пауза, одно сообщение; «Продолжить» присылает весь долг', async () => {
+    const t = setup();
+    addLearned(t, 1, 1, 3, [{ dueAt: at('2026-09-16T03:00:00Z'), status: 'missed' }]);
+    await t.tick(minutes(WEEK_LATER, -1));
+    expect(t.user.pausedFrom).toBeNull();
+
+    await t.tick(WEEK_LATER);
+    expect(t.user.pausedFrom).toEqual(WEEK_LATER);
+    expect(t.user.pausedUntil).toBeNull();
+    expect(t.sent.filter((s) => s.kind === 'autopause')).toHaveLength(1);
+    const before = batches(t).length;
+
+    // На паузе ничего не приходит, повторно автопауза не ставится.
+    await t.tick(at('2026-09-23T03:00:00Z'));
+    await t.tick(at('2026-09-24T03:00:00Z'));
+    expect(batches(t)).toHaveLength(before);
+    expect(t.sent.filter((s) => s.kind === 'autopause')).toHaveLength(1);
+
+    const resumeAt = at('2026-09-24T10:00:00Z');
+    expect(await t.pause.resume(USER, resumeAt)).toEqual({ kind: 'resumed', debtMessages: 1 });
+    expect(t.user.pausedFrom).toBeNull();
+    expect(batches(t).at(-1)).toMatchObject({
+      batch: { kind: 'debt', reviews: [{ lineStart: 1, lineEnd: 3 }] },
+    });
+    expect(await t.pause.resume(USER, resumeAt)).toEqual({ kind: 'not_paused' });
+  });
+
+  it('без долга пауза не ставится', async () => {
+    const t = setup();
+    addLearned(t, 1, 1, 12, [{ dueAt: at('2026-09-16T03:00:00Z'), status: 'confirmed' }]);
+    t.plan.status = 'learning_done';
+    await t.tick(WEEK_LATER);
+    expect(t.user.pausedFrom).toBeNull();
+  });
+
+  it('не удалось сообщить — паузы нет, следующий тик пробует снова', async () => {
+    const t = setup();
+    addLearned(t, 1, 1, 3, [{ dueAt: at('2026-09-16T03:00:00Z'), status: 'missed' }]);
+    t.fail({ ok: false, reason: 'error', error: new Error('500') });
+    await t.tick(WEEK_LATER);
+    expect(t.user.pausedFrom).toBeNull();
+    await t.tick(minutes(WEEK_LATER, 1));
+    expect(t.user.pausedFrom).toEqual(minutes(WEEK_LATER, 1));
+  });
+
+  it('после продолжения без долга порция приходит по правилу «сейчас или в слот»', async () => {
+    const t = setup();
+    t.user.pausedFrom = at('2026-09-15T00:00:00Z');
+    expect(await t.pause.resume(USER, minutes(MAIN, 60))).toEqual({
+      kind: 'resumed',
+      debtMessages: 0,
+    });
+    expect(t.portions).toHaveLength(1);
+  });
+});

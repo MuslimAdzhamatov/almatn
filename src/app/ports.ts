@@ -201,6 +201,8 @@ export interface LearnerSettings {
   pausedFrom: Date | null;
   pausedUntil: Date | null;
   blockedAt: Date | null;
+  /** Последнее нажатие или команда; до первого — момент регистрации. */
+  lastActivityAt: Date;
 }
 
 /** Текст плана — то, что нужно для подписей и картинок. */
@@ -378,6 +380,8 @@ export interface LearningStore {
   ): Promise<void>;
   countUnits(textId: number, from: number, to: number): Promise<number>;
   setBlocked(userId: bigint, at: Date): Promise<void>;
+  /** Пауза пользователя: until = null — до ручного продолжения; from = null — паузы нет. */
+  setPause(userId: bigint, from: Date | null, until: Date | null): Promise<void>;
 }
 
 /** Картинка к отправке — уже известный Telegram file_id или PNG; подпись — по номерам единиц. */
@@ -459,6 +463,8 @@ export interface Notifier {
     pictures: readonly NotifierPicture[],
   ): Promise<SendResult>;
   sendText(userId: bigint, text: string): Promise<SendResult>;
+  /** Автопауза: сообщение с кнопкой «Продолжить». */
+  sendAutoPause(userId: bigint): Promise<SendResult>;
   /** Убрать кнопки под сообщением (порция заменена, план закончился). */
   clearButtons(userId: bigint, messageId: number): Promise<void>;
 }
