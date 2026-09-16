@@ -85,7 +85,7 @@ export function summaryText(summary: TextSummary): string {
   } else {
     lines.push(
       t.found(count, report.firstPage, report.lastPage, summary.pageCount),
-      strategy === 'text_lines' ? t.byTextLines : t.byNumbers,
+      strategyNote(strategy),
     );
     if (report.anomalies.length > 0) {
       lines.push('', t.anomaliesTitle);
@@ -102,6 +102,12 @@ export function summaryText(summary: TextSummary): string {
   return lines.join('\n');
 }
 
+function strategyNote(strategy: TextSummary['strategy']): string {
+  if (strategy === 'text_lines') return t.byTextLines;
+  if (strategy === 'image_lines') return t.byImageLines;
+  return t.byNumbers;
+}
+
 export function imageCaption(summary: TextSummary, image: LineImage): string {
   return unitRangeLabel(image.lineStart, image.lineEnd, summary.strategy, summary.unitName);
 }
@@ -111,7 +117,11 @@ export function parseSummaryKeyboard(summary: TextSummary): InlineKeyboard {
   const keyboard = new InlineKeyboard()
     .text(t.buttons.confirm, `${textCallbacks.confirm}:${id}`)
     .row();
-  if (summary.strategy === 'numbers' || summary.strategy === 'text_lines') {
+  if (
+    summary.strategy === 'numbers' ||
+    summary.strategy === 'text_lines' ||
+    summary.strategy === 'image_lines'
+  ) {
     const nextUnit: UnitName = summary.unitName === 'lines' ? 'bayts' : 'lines';
     keyboard.text(t.buttons.callAs(nextUnit), `${textCallbacks.unit}:${id}:${nextUnit}`).row();
     keyboard.text(t.buttons.byPages, `${textCallbacks.reparse}:${id}:manual_page`).row();

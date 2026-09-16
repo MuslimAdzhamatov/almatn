@@ -1,7 +1,18 @@
 import { limits } from '../config/limits.js';
 import { pageChunks } from '../core/pdf/chunks.js';
 import type { PdfPageWords } from '../core/pdf/bbox.js';
-import { layoutNumberedLines, type LineBox } from '../core/pdf/layout.js';
+import {
+  dropRunningBands,
+  imageLinesDefaults,
+  imageLinesToBoxes,
+  inkBands,
+  refineBands,
+  typicalHeight,
+  typicalWidth,
+  type InkBand,
+  type PageBands,
+} from '../core/pdf/imagelines.js';
+import { inkPerRow, layoutNumberedLines, type LineBox } from '../core/pdf/layout.js';
 import { pagesAsUnits } from '../core/pdf/manual.js';
 import { detectNumberedLines, estimatePitch, type NumberedLine } from '../core/pdf/numbers.js';
 import { PdfToolError } from '../core/pdf/poppler.js';
@@ -48,6 +59,11 @@ export async function parsePdf(
 
   const plan = mode === 'auto' ? planUnits(pages) : null;
   if (!plan) {
+    // Ни номеров, ни пригодного текстового слоя — скан: строки ищутся по изображению страниц.
+    if (mode === 'auto') {
+      const byImage = await parseByImage(file, workDir, tools, pages, discard);
+      if (byImage) return byImage;
+    }
     const sizes = pages.map((p) => ({ page: p.page, widthPt: p.width, heightPt: p.height }));
     return {
       strategy: 'manual_page',
@@ -113,6 +129,93 @@ export async function parsePdf(
     // и только теперь становятся фрагментами своих единиц.
     boxes: headings.some(Boolean) ? attachHeadings(boxes, headings) : boxes,
     report: { firstPage: plan.firstPage, lastPage: plan.lastPage, anomalies: plan.anomalies },
+  };
+}
+
+/**
+ * Разбор по изображению: страницы рендерятся частями, от каждой остаются только профиль
+ * тёмных пикселей и полосы (несколько килобайт на страницу), сами картинки сразу удаляются.
+ * Обычная высота и ширина строки считаются по всему документу, поэтому классификация полос
+ * идёт вторым проходом — уже без изображений.
+ */
+async function parseByImage(
+  file: string,
+  workDir: string,
+  tools: PdfTools,
+  pages: readonly PdfPageWords[],
+  discard: (path: string) => Promise<void>,
+): Promise<ParsedPdf | null> {
+  interface Scanned {
+    page: number;
+    width: number;
+    height: number;
+    widthPt: number;
+    heightPt: number;
+    rows: Uint32Array;
+    bands: InkBand[];
+  }
+
+  const scanned: Scanned[] = [];
+  for (const [firstPage, lastPage] of pageChunks(1, pages.length, limits.pdf.renderChunkPages)) {
+    const rendered = await tools.render(file, {
+      outDir: workDir,
+      dpi: limits.pdf.analysisDpi,
+      gray: true,
+      firstPage,
+      lastPage,
+    });
+    try {
+      for (let page = firstPage; page <= lastPage; page++) {
+        const path = rendered.get(page);
+        const size = pages[page - 1];
+        if (!path || !size) continue;
+        const image = await tools.loadGray(path);
+        const rows = inkPerRow(image);
+        scanned.push({
+          page,
+          width: image.width,
+          height: image.height,
+          widthPt: size.width,
+          heightPt: size.height,
+          rows,
+          bands: inkBands(image, rows),
+        });
+      }
+    } finally {
+      for (const path of rendered.values()) await discard(path);
+    }
+  }
+
+  const height = typicalHeight(
+    scanned.flatMap((page) => page.bands),
+    imageLinesDefaults.minHeightShare,
+  );
+  if (height <= 0) return null;
+  const width = typicalWidth(
+    scanned.flatMap((page) => page.bands),
+    height,
+  );
+
+  const classified: PageBands[] = scanned.map((page) => ({
+    page: page.page,
+    width: page.width,
+    height: page.height,
+    widthPt: page.widthPt,
+    heightPt: page.heightPt,
+    bands: refineBands(page.bands, page.rows, { height, width, imageWidth: page.width }),
+  }));
+
+  const boxes = imageLinesToBoxes(dropRunningBands(classified, height));
+  if (boxes.length < imageLinesDefaults.minLines) return null;
+
+  return {
+    strategy: 'image_lines',
+    boxes,
+    report: {
+      firstPage: boxes[0]!.page,
+      lastPage: boxes.at(-1)!.page,
+      anomalies: [],
+    },
   };
 }
 

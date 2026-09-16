@@ -3,7 +3,16 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { layoutNumberedLines, type PageRaster } from './layout.js';
+import {
+  dropRunningBands,
+  imageLinesToBoxes,
+  inkBands,
+  refineBands,
+  typicalHeight,
+  typicalWidth,
+  type PageBands,
+} from './imagelines.js';
+import { inkPerRow, layoutNumberedLines, type PageRaster } from './layout.js';
 import { detectNumberedLines } from './numbers.js';
 import { detectTextLines } from './textlines.js';
 import { extractWords, pdfInfo, renderPages } from './poppler.js';
@@ -92,6 +101,54 @@ describe.skipIf(!hasPoppler)('эталонные PDF', () => {
     // Колонтитул с номером страницы отсечён.
     expect(parse!.lines.every((line) => line.yMin < 800)).toBe(true);
   }, 60_000);
+
+  it('المقدمة الجزرية.pdf по изображению: строки, заголовки в рамках и отсечённые колонтитулы', async () => {
+    const file = join(SAMPLES, 'المقدمة الجزرية.pdf');
+    const sizes = await extractWords(file);
+    const dir = await mkdtemp(join(tmpdir(), 'almatn-test-'));
+    try {
+      const files = await renderPages(file, { outDir: dir, dpi: 100, gray: true });
+      const scanned = [];
+      for (const [page, path] of [...files].sort((a, b) => a[0] - b[0])) {
+        const image = await loadGray(path);
+        const rows = inkPerRow(image);
+        scanned.push({ page, image, rows, bands: inkBands(image, rows), size: sizes[page - 1]! });
+      }
+
+      const all = scanned.flatMap((page) => page.bands);
+      const height = typicalHeight(all, 0.4);
+      const width = typicalWidth(all, height);
+      // Строка скана при 100 dpi — около 38 пикселей.
+      expect(height).toBeGreaterThan(30);
+      expect(height).toBeLessThan(45);
+
+      const classified: PageBands[] = scanned.map((page) => ({
+        page: page.page,
+        width: page.image.width,
+        height: page.image.height,
+        widthPt: page.size.width,
+        heightPt: page.size.height,
+        bands: refineBands(page.bands, page.rows, { height, width, imageWidth: page.image.width }),
+      }));
+      // Линия рамки колонтитула — не строка.
+      expect(
+        classified.filter((page) => page.bands.some((b) => b.kind === 'rule')).length,
+      ).toBeGreaterThan(4);
+
+      const boxes = imageLinesToBoxes(dropRunningBands(classified, height));
+      // В книге 107 бейтов; обложка и пустая страница в текст не попадают, концовка — попадает.
+      expect(boxes.length).toBeGreaterThan(90);
+      expect(boxes.length).toBeLessThan(120);
+      expect(boxes[0]?.page).toBe(3);
+      expect(boxes.at(-1)?.page).toBe(10);
+      // Заголовки разделов в рамках стали фрагментами своих строк.
+      expect(
+        boxes.filter((box) => box.fragments.some((f) => f.kind === 'heading')).length,
+      ).toBeGreaterThan(5);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 180_000);
 
   it('متن عمدة الاحكام.pdf: текстовый слой сломан, по строкам не разбирается', async () => {
     const pages = await extractWords(join(SAMPLES, 'متن عمدة الاحكام.pdf'));
