@@ -1,11 +1,14 @@
 import { createOnboarding } from './app/onboarding.js';
+import { createPlans } from './app/plans.js';
 import type { PdfTools } from './app/ports.js';
 import { createTexts } from './app/texts.js';
 import { env } from './config/env.js';
+import { limits } from './config/limits.js';
 import { extractWords, pdfInfo, renderPage, renderPages } from './core/pdf/poppler.js';
 import { cropPng, imageSize, loadGray } from './core/pdf/render.js';
 import { createDb } from './db/client.js';
 import { createDialogsRepository } from './db/repositories/dialogs.js';
+import { createPlansRepository } from './db/repositories/plans.js';
 import { createTextsRepository } from './db/repositories/texts.js';
 import { createUploadsRepository } from './db/repositories/uploads.js';
 import { createUsersRepository } from './db/repositories/users.js';
@@ -31,13 +34,21 @@ async function main(): Promise<void> {
   };
 
   const onboarding = createOnboarding({ users, dialogs });
+  const textsStore = createTextsRepository(db);
   const texts = createTexts({
-    store: createTextsRepository(db),
+    store: textsStore,
     uploads: createUploadsRepository(db),
     dialogs,
     files,
     tools: pdfTools,
     reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка обработки текста'),
+  });
+  const plans = createPlans({
+    plans: createPlansRepository(db),
+    texts: textsStore,
+    users,
+    dialogs,
+    limits: limits.plan,
   });
 
   // До приёма сообщений: загрузок и разборов ещё нет, всё во tmp/ и work-* — остатки прошлого запуска.
@@ -46,7 +57,7 @@ async function main(): Promise<void> {
     logger.info(stale, 'Удалены временные файлы прошлого запуска');
   }
 
-  const bot = createBot(env.BOT_TOKEN, { users, onboarding, texts, files, logger });
+  const bot = createBot(env.BOT_TOKEN, { users, onboarding, texts, plans, files, logger });
   await bot.api.setMyCommands(BOT_COMMANDS);
   // Разборы PDF, прерванные перезапуском, продолжаются (статус хранится в БД).
   await texts.resumeParsing();

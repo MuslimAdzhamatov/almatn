@@ -17,7 +17,7 @@ function entryText(entry: ScheduleEntry): string {
     : `в ${entry.planned} → придёт в ${entry.actual}`;
 }
 
-function scheduleText(schedule: DailySchedule): string {
+export function scheduleText(schedule: DailySchedule): string {
   return [
     'Расписание:',
     `• новая порция — ${entryText(schedule.newPortion)}`,
@@ -241,12 +241,116 @@ export const texts = {
     askTitle: (title: string) => `Как назвать текст? Напишите название или оставьте «${title}».`,
     invalidTitle: (maxLength: number) =>
       `Название должно быть от 1 до ${maxLength} символов. Напишите другое.`,
-    saved: (title: string, count: string) =>
-      `Текст «${title}» сохранён: ${count} ✅\n\nСоздание плана заучивания появится в ближайшем обновлении.`,
+    saved: (title: string, count: string) => `Текст «${title}» сохранён: ${count} ✅`,
     reparsing: 'Разбираю заново…',
     cancelled: 'Загрузка отменена, файл удалён.',
     stale: 'Эта кнопка уже неактуальна',
     staleTitle: 'Этот текст уже сохранён или удалён.',
+  },
+
+  plan: {
+    scope: (title: string) => `Составим план заучивания «${title}».\n\nЧто учить?`,
+    scopeInput: (total: string, invalid: boolean) =>
+      [
+        ...(invalid ? ['Не получилось разобрать диапазон.', ''] : []),
+        `Напишите диапазон, например 1-100 (всего ${total}). Одно число — с него до конца.`,
+      ].join('\n'),
+    pace: (total: string) => `К заучиванию: ${total}.\n\nКак задать темп?`,
+    deadlineKind: 'За какой срок выучить?',
+    deadlineDays: (maxDays: number) =>
+      `Сколько дней на заучивание? Выберите или напишите число (до ${maxDays}).`,
+    deadlineMonths: 'Сколько месяцев на заучивание? Месяц считается за 30 дней.',
+    deadlineDate: (start: string) =>
+      `К какой дате выучить? Начало — ${start}. Выберите или напишите дату в формате ДД.ММ.ГГГГ.`,
+    deadlineErrors: {
+      format: 'Не получилось разобрать ответ.',
+      too_long: (maxDays: number) => `Слишком долгий срок — не больше ${maxDays} дней.`,
+      deadline_before_start: (start: string) => `Срок раньше даты начала (${start}).`,
+      no_working_days:
+        'В этот срок нет ни одного рабочего дня — все дни выходные. Укажите срок побольше или измените выходные.',
+    },
+    perDay: (manyNoun: string, max: number, invalid: boolean) =>
+      [
+        ...(invalid ? [`Нужно целое число от 1 до ${max}.`, ''] : []),
+        `Сколько учить в день? Обычно по силам 2–5 ${manyNoun} в день.`,
+        'Выберите или напишите своё число.',
+      ].join('\n'),
+    restDays:
+      'Выберите выходные — до двух дней в неделю.\n\nВ выходной не придёт новая порция; повторы и напоминания о них будут как обычно.',
+    startDate: (today: string, maxDays: number, invalid: boolean) =>
+      [
+        ...(invalid
+          ? [`Нужна дата не раньше сегодняшней и не позже чем через ${maxDays} дней.`, '']
+          : []),
+        `С какого дня начать? Сегодня — ${today}. Выберите или напишите дату в формате ДД.ММ.ГГГГ.`,
+      ].join('\n'),
+    sendTime: (invalid: boolean) =>
+      [
+        ...(invalid ? ['Не получилось разобрать время.', ''] : []),
+        'Во сколько присылать новую порцию? Время общее для всех текстов.',
+        'Выберите или напишите время в формате ЧЧ:ММ, например 06:30.',
+      ].join('\n'),
+    overload: (perDay: string, peak: string) =>
+      `⚠️ Это может оказаться тяжело: каждый день ${perDay} и до ${peak} повтора.\n\nРекомендуем 2–5 в день.`,
+
+    confirmTitle: (title: string, range: string, total: string) =>
+      `План: «${title}», ${range} (${total}).`,
+    pacePerDay: (perDay: string) => `Темп: ${perDay} в день.`,
+    paceDeadline: (perDay: string, deadline: string) =>
+      `Темп: ${perDay} в день, чтобы выучить к ${deadline}.`,
+    restNone: 'Выходные: нет.',
+    restList: (days: string) => `Выходные: ${days}.`,
+    start: (date: string, isToday: boolean) => `Начало: ${isToday ? `сегодня, ${date}` : date}.`,
+    firstPortion: (date: string) => `Первая порция — ${date} (дата начала выпадает на выходной).`,
+    endDates: (end: string, lastReview: string) =>
+      `Заучивание закончится ${end}, последние повторы — ${lastReview}.`,
+    endsEarlyShort: 'Текст короче срока: по одной единице в день он закончится раньше.',
+    endsEarlyRounded: 'Норма округлена вверх, поэтому заучивание закончится немного раньше срока.',
+    load: (typical: string, peak: number) =>
+      `Повторение: обычно ${typical} в день, на пике до ${peak}.`,
+    overlap: (titles: string, total: number, peak: number, combined: number) =>
+      [
+        `⚠️ Уже идут планы: ${titles}.`,
+        total > 0
+          ? `В ближайшие 2 недели по ним ${total} ${pluralRu(total, ['единица', 'единицы', 'единиц'])} повтора (до ${peak} в день); вместе с новым планом — до ${combined} в день.`
+          : `Вместе с новым планом повторение на пике — до ${combined} в день.`,
+      ].join('\n'),
+    started: (title: string, first: string) =>
+      `План «${title}» создан ✅\n\nПервая порция — ${first}.\nВыдача порций по расписанию появится в ближайшем обновлении бота.`,
+    postponed: 'Хорошо, план можно будет составить позже.',
+    alreadyPlanned: (title: string) => `У текста «${title}» уже есть активный план.`,
+    stale: 'Эта кнопка уже неактуальна',
+    today: 'сегодня',
+
+    weekdays: ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'],
+    weekdaysShort: ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'],
+
+    buttons: {
+      all: (total: string) => `Весь текст (${total})`,
+      range: 'Выбрать диапазон…',
+      later: 'Позже',
+      byDeadline: '📅 По сроку',
+      perDay: '🔢 По количеству в день',
+      days: 'Количество дней',
+      months: 'Количество месяцев',
+      date: 'К дате',
+      nDays: (n: number) => `${n} ${pluralRu(n, ['день', 'дня', 'дней'])}`,
+      nMonths: (n: number) => `${n} ${pluralRu(n, ['месяц', 'месяца', 'месяцев'])}`,
+      datePreset: (months: number, date: string) =>
+        `${months === 12 ? 'Через год' : months === 6 ? 'Через полгода' : `Через ${months === 1 ? 'месяц' : `${months} месяца`}`} — ${date}`,
+      restDone: 'Готово',
+      restNone: 'Без выходных',
+      todayStart: 'Сегодня',
+      tomorrow: 'Завтра',
+      reduce: 'Уменьшить нагрузку',
+      force: 'Всё равно продолжить',
+      go: '▶️ Начать',
+      editPace: 'Изменить темп',
+      editRest: 'Изменить выходные',
+      editStart: 'Изменить дату начала',
+      editTime: 'Изменить время',
+      back: '← Назад',
+    },
   },
 
   notReadyYet: 'Эта функция появится на следующих этапах разработки.',
@@ -295,6 +399,17 @@ export function pluralRu(n: number, [one, few, many]: readonly [string, string, 
 /** «448 бейтов», «1 страница». */
 export function unitCount(n: number, strategy: ParseStrategy, unitName: UnitName): string {
   return `${n} ${pluralRu(n, NOUNS[unitKind(strategy, unitName)])}`;
+}
+
+/** Родительный падеж после «до»: «до 21 бейта», «до 72 бейтов». */
+export function unitCountGenitive(n: number, strategy: ParseStrategy, unitName: UnitName): string {
+  const [, singular, plural] = NOUNS[unitKind(strategy, unitName)];
+  return `${n} ${n % 10 === 1 && n % 100 !== 11 ? singular : plural}`;
+}
+
+/** «бейтов», «строк» — для фраз вида «2–5 бейтов в день». */
+export function unitNounMany(strategy: ParseStrategy, unitName: UnitName): string {
+  return NOUNS[unitKind(strategy, unitName)][2];
 }
 
 /** Подпись к картинке: «Бейты 41–45», «Страница 3». */

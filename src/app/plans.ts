@@ -128,6 +128,8 @@ export type PlanScreen =
       lineFrom: number;
       lineTo: number;
       paceMode: PaceInput['mode'];
+      startDate: IsoDate;
+      today: IsoDate;
       summary: PlanSummary;
       schedule: DailySchedule;
       overlap: PlanOverlap | null;
@@ -360,6 +362,8 @@ export function createPlans({
       lineFrom: draft.lineFrom,
       lineTo: draft.lineTo,
       paceMode: draft.pace.mode,
+      startDate: draft.startDate,
+      today,
       summary,
       schedule: buildDailySchedule(settings),
       overlap: await overlapFor(userId, s, summary, settings, today),

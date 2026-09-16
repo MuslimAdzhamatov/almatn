@@ -3,12 +3,14 @@ import { apiThrottler } from '@grammyjs/transformer-throttler';
 import { Bot, GrammyError, HttpError } from 'grammy';
 import type { BotCommand } from 'grammy/types';
 import type { Onboarding } from '../../app/onboarding.js';
+import type { Plans } from '../../app/plans.js';
 import type { FileStore } from '../../app/ports.js';
 import type { Texts } from '../../app/texts.js';
 import type { UsersRepository } from '../../db/repositories/users.js';
 import type { Logger } from '../../lib/logger.js';
 import type { BotContext } from './context.js';
 import { registerOnboarding } from './handlers/onboarding.js';
+import { registerPlans, type PlansHandlers } from './handlers/plans.js';
 import { registerTexts } from './handlers/texts.js';
 import { texts } from './texts.js';
 
@@ -16,6 +18,7 @@ export interface BotDeps {
   users: UsersRepository;
   onboarding: Onboarding;
   texts: Texts;
+  plans: Plans;
   files: FileStore;
   logger: Logger;
 }
@@ -43,13 +46,17 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
 
   // Обработчики текстов регистрируются первыми: файл, присланный до конца настройки,
   // должен попасть в копилку, а не в шаг онбординга. Текстовые сообщения они пропускают дальше.
+  // Создание плана начинается сразу после сохранения текста; его ответы текстом — после онбординга.
+  let plansHandlers: PlansHandlers | null = null;
   const textsHandlers = registerTexts(bot, {
     texts: deps.texts,
     files: deps.files,
     token,
     logger: deps.logger,
+    onSaved: (ctx, textId) => plansHandlers?.begin(ctx, textId) ?? Promise.resolve(),
   });
   registerOnboarding(bot, deps.onboarding, { onFinished: textsHandlers.processPending });
+  plansHandlers = registerPlans(bot, deps.plans);
 
   bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);

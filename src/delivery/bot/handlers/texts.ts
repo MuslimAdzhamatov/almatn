@@ -1,5 +1,5 @@
 import { extname } from 'node:path';
-import { GrammyError, type Bot, type InlineKeyboard } from 'grammy';
+import { GrammyError, type Bot } from 'grammy';
 import { limits } from '../../../config/limits.js';
 import type { FileStore } from '../../../app/ports.js';
 import {
@@ -11,6 +11,7 @@ import {
 import type { Logger } from '../../../lib/logger.js';
 import type { BotContext } from '../context.js';
 import { downloadTelegramFile } from '../download.js';
+import { editOrReply } from '../edit.js';
 import { sendImages } from '../images.js';
 import { texts } from '../texts.js';
 import {
@@ -32,6 +33,8 @@ export interface TextsHandlersDeps {
   files: FileStore;
   token: string;
   logger: Logger;
+  /** Текст сохранён — дальше создание плана. */
+  onSaved?: (ctx: BotContext, textId: number) => Promise<void>;
 }
 
 export interface TextsHandlers {
@@ -41,15 +44,6 @@ export interface TextsHandlers {
 
 const matchedId = (ctx: BotContext) => (Array.isArray(ctx.match) ? Number(ctx.match[1]) : NaN);
 const matchedArg = (ctx: BotContext) => (Array.isArray(ctx.match) ? (ctx.match[2] ?? '') : '');
-
-async function editOrReply(ctx: BotContext, text: string, keyboard?: InlineKeyboard) {
-  try {
-    await ctx.editMessageText(text, { reply_markup: keyboard });
-  } catch (err) {
-    if (err instanceof GrammyError && err.description.includes('message is not modified')) return;
-    await ctx.reply(text, { reply_markup: keyboard });
-  }
-}
 
 async function showAction(ctx: BotContext, action: TextAction, viaButton: boolean) {
   if (action.kind === 'stale') {
@@ -74,6 +68,12 @@ async function showAction(ctx: BotContext, action: TextAction, viaButton: boolea
 }
 
 export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): TextsHandlers {
+  /** Показывает результат; после сохранения текста переходит к созданию плана. */
+  async function show(ctx: BotContext, action: TextAction, viaButton: boolean) {
+    await showAction(ctx, action, viaButton);
+    if (action.kind === 'saved') await deps.onSaved?.(ctx, action.textId);
+  }
+
   /** Сводка разбора: текст → картинка первых строк → кнопки подтверждения. */
   async function sendSummary(chatId: number, textId: number) {
     const summary = await deps.texts.summary(textId);
@@ -288,23 +288,15 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): Te
   });
 
   bot.callbackQuery(new RegExp(`^${textCallbacks.confirm}:(\\d+)$`), async (ctx) => {
-    await showAction(ctx, await deps.texts.confirm(ctx.user.id, matchedId(ctx)), true);
+    await show(ctx, await deps.texts.confirm(ctx.user.id, matchedId(ctx)), true);
   });
 
   bot.callbackQuery(new RegExp(`^${textCallbacks.unit}:(\\d+):(\\w+)$`), async (ctx) => {
-    await showAction(
-      ctx,
-      await deps.texts.setUnit(ctx.user.id, matchedId(ctx), matchedArg(ctx)),
-      true,
-    );
+    await show(ctx, await deps.texts.setUnit(ctx.user.id, matchedId(ctx), matchedArg(ctx)), true);
   });
 
   bot.callbackQuery(new RegExp(`^${textCallbacks.reparse}:(\\d+):(\\w+)$`), async (ctx) => {
-    await showAction(
-      ctx,
-      await deps.texts.reparse(ctx.user.id, matchedId(ctx), matchedArg(ctx)),
-      true,
-    );
+    await show(ctx, await deps.texts.reparse(ctx.user.id, matchedId(ctx), matchedArg(ctx)), true);
   });
 
   // Меню «Разобрать по-другому» и возврат из него к подтверждению.
@@ -331,7 +323,7 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): Te
 
   // Ввод диапазона страниц или числа полос со страницы.
   bot.callbackQuery(new RegExp(`^${textCallbacks.reparseInput}:(\\d+):(\\w+)$`), async (ctx) => {
-    await showAction(
+    await show(
       ctx,
       await deps.texts.askReparseInput(ctx.user.id, matchedId(ctx), matchedArg(ctx)),
       true,
@@ -339,11 +331,11 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): Te
   });
 
   bot.callbackQuery(new RegExp(`^${textCallbacks.cancel}:(\\d+)$`), async (ctx) => {
-    await showAction(ctx, await deps.texts.cancel(ctx.user.id, matchedId(ctx)), true);
+    await show(ctx, await deps.texts.cancel(ctx.user.id, matchedId(ctx)), true);
   });
 
   bot.callbackQuery(new RegExp(`^${textCallbacks.keepTitle}:(\\d+)$`), async (ctx) => {
-    await showAction(ctx, await deps.texts.keepTitle(ctx.user.id, matchedId(ctx)), true);
+    await show(ctx, await deps.texts.keepTitle(ctx.user.id, matchedId(ctx)), true);
   });
 
   // Ответ текстом: диапазон страниц и число полос со страницы, затем название после «Всё верно».
@@ -351,12 +343,12 @@ export function registerTexts(bot: Bot<BotContext>, deps: TextsHandlersDeps): Te
     if (ctx.message.text.startsWith('/')) return next();
     const reparse = await deps.texts.handleReparseText(ctx.user.id, ctx.message.text);
     if (reparse) {
-      await showAction(ctx, reparse, false);
+      await show(ctx, reparse, false);
       return;
     }
     const action = await deps.texts.handleTitleText(ctx.user.id, ctx.message.text);
     if (!action) return next();
-    await showAction(ctx, action, false);
+    await show(ctx, action, false);
   });
 
   return {
