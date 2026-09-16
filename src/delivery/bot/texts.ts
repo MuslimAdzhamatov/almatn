@@ -400,6 +400,26 @@ export const texts = {
     },
   },
 
+  reviews: {
+    review: (title: string, ranges: string) =>
+      `🔁 Повторение: «${title}» — ${ranges}.\n\nПовторите и нажмите «Повторил(а)».`,
+    debt: (title: string, items: string) =>
+      `⏳ Не выполнено по «${title}»:\n${items}\n\nНовая порция придёт, когда всё будет сделано.`,
+    evening: (title: string, items: string) =>
+      `🌙 Сегодня не выполнено по «${title}»:\n${items}\n\nНовая порция придёт, когда всё будет сделано.`,
+    repeatItem: (ranges: string) => `• повторить ${ranges}`,
+    learnItem: (range: string) => `• выучить ${range}`,
+    confirmed: (title: string) => `✅ «${title}»: повторение отмечено.`,
+    missed: 'Хорошо. Эти повторы останутся в долге — напомню вечером или в следующий слот.',
+    nothingToAnswer: 'Здесь уже всё отмечено',
+    buttons: {
+      confirm: '✅ Повторил(а)',
+      confirmAll: '✅ Повторил(а) всё',
+      missed: '⏳ Не успел(а)',
+      learned: (range: string) => `📖 Выучил ${range}`,
+    },
+  },
+
   notReadyYet: 'Эта функция появится на следующих этапах разработки.',
   unknownMessage: 'Не понял сообщение. Список команд — в меню бота.',
   unexpectedError: 'Что-то пошло не так. Попробуйте ещё раз чуть позже.',

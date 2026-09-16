@@ -1,371 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { LineBox } from '../core/pdf/layout.js';
-import type { Images, OutgoingPicture } from './images.js';
-import { createLearning, type PortionAction } from './learning.js';
-import type {
-  DeliveryRecord,
-  LearnerSettings,
-  LearningStore,
-  Notifier,
-  PlanContext,
-  PlanRecord,
-  PortionRecord,
-  PortionView,
-  ReviewStageName,
-  ReviewStatusName,
-  SendResult,
-} from './ports.js';
-
-const USER = 7n;
-// 16.09.2026 (ср), основной слот 06:00 МСК = 03:00 UTC.
-const at = (s: string) => new Date(s);
-const MAIN = at('2026-09-16T03:00:00Z');
-const minutes = (d: Date, m: number) => new Date(d.getTime() + m * 60_000);
-
-interface ReviewRow {
-  id: number;
-  portionId: number;
-  stage: ReviewStageName;
-  dueAt: Date;
-  status: ReviewStatusName;
-}
-
-function setup(options: { totalLines?: number; unitsPerDay?: number; restDays?: number[] } = {}) {
-  const totalLines = options.totalLines ?? 12;
-  const skipped = new Set<number>();
-  const user: LearnerSettings = {
-    userId: USER,
-    timezone: 'Europe/Moscow',
-    dailySendTime: '06:00',
-    eveningReminderTime: '21:00',
-    nightStart: '23:00',
-    nightEnd: '07:00',
-    nightPolicy: 'keep',
-    learnReminderDelayMin: 120,
-    pausedFrom: null,
-    pausedUntil: null,
-    blockedAt: null,
-  };
-  const plan: PlanRecord = {
-    id: 1,
-    textId: 10,
-    userId: USER,
-    lineFrom: 1,
-    lineTo: totalLines,
-    unitsPerDay: options.unitsPerDay ?? 3,
-    paceMode: 'per_day',
-    startDate: '2026-09-16',
-    deadlineDate: null,
-    deadlineInput: null,
-    restDays: options.restDays ?? [],
-    status: 'active',
-    nextLine: 1,
-    estimatedEndDate: '2026-09-19',
-  };
-  const context = (): PlanContext => ({
-    plan: { ...plan },
-    user: { ...user },
-    text: {
-      id: 10,
-      title: 'Манзума',
-      unitName: 'bayts',
-      parseStrategy: 'numbers',
-      sourceKind: 'pdf',
-      filePath: '/t.pdf',
-      totalLines,
-    },
-  });
-
-  const portions: PortionRecord[] = [];
-  const reviews: ReviewRow[] = [];
-  const deliveries: (DeliveryRecord & { dedupeKey: string })[] = [];
-  let id = 100;
-  const box = (n: number): LineBox & { skipped: boolean } => ({
-    lineNumber: n,
-    printedNumber: n,
-    page: 1,
-    sectionBreakBefore: false,
-    skipped: skipped.has(n),
-    fragments: [
-      { kind: 'text', page: 1, yTop: n * 20, yBottom: n * 20 + 18, xLeft: null, xRight: null },
-    ],
-  });
-  const range = (from: number, to: number) =>
-    Array.from({ length: Math.max(0, Math.min(to, totalLines) - Math.max(from, 1) + 1) }, (_, i) =>
-      box(Math.max(from, 1) + i),
-    );
-  const newDelivery = (d: {
-    userId: bigint;
-    textId: number | null;
-    portionId: number | null;
-    kind: DeliveryRecord['kind'];
-    slotAt: Date;
-    dedupeKey: string;
-  }) => {
-    if (deliveries.some((x) => x.dedupeKey === d.dedupeKey)) return null;
-    const row = {
-      ...d,
-      id: ++id,
-      status: 'sending' as const,
-      messageIds: [],
-      buttonsMessageId: null,
-      cropMarginSteps: 0,
-      extraBefore: 0,
-      extraAfter: 0,
-    };
-    deliveries.push(row);
-    return row.id;
-  };
-  let locked = false;
-
-  const store: LearningStore = {
-    withTickLock: async (fn) => {
-      if (locked) return null;
-      locked = true;
-      try {
-        return await fn();
-      } finally {
-        locked = false;
-      }
-    },
-    listActivePlans: async () => (plan.status === 'active' ? [context()] : []),
-    planContext: async () => context(),
-    lastPortion: async () => portions.at(-1) ?? null,
-    getPortion: async (pid) => portions.find((p) => p.id === pid) ?? null,
-    unlearnedPortion: async () => portions.find((p) => p.status === 'sent') ?? null,
-    textReviews: async () => reviews.filter((r) => r.stage !== 'learn_reminder'),
-    unitRows: async (_t, from, to) =>
-      range(from, to).map(({ lineNumber, skipped: s }) => ({ lineNumber, skipped: s })),
-    unitBoxes: async (_t, from, to) => range(from, to),
-    createPortion: async (p) => {
-      if (plan.nextLine !== p.expectedNextLine || portions.some((x) => x.seq === p.seq)) {
-        return null;
-      }
-      const portion: PortionRecord = {
-        id: ++id,
-        planId: p.planId,
-        seq: p.seq,
-        lineStart: p.lineStart,
-        lineEnd: p.lineEnd,
-        status: 'sent',
-        sentAt: p.sentAt,
-        learnedAt: null,
-        anchorAt: null,
-      };
-      portions.push(portion);
-      plan.nextLine = p.nextLine;
-      reviews.push({
-        id: ++id,
-        portionId: portion.id,
-        stage: 'learn_reminder',
-        dueAt: p.learnReminderAt,
-        status: 'pending',
-      });
-      const deliveryId = newDelivery({ ...p.delivery, portionId: portion.id, kind: 'portion' })!;
-      return { portion: { ...portion }, deliveryId };
-    },
-    rollbackPortion: async (pid, nextLine) => {
-      // В БД отправки и повторы порции удаляет каскад.
-      for (let i = deliveries.length - 1; i >= 0; i--) {
-        if (deliveries[i]!.portionId === pid) deliveries.splice(i, 1);
-      }
-      portions.splice(
-        portions.findIndex((p) => p.id === pid),
-        1,
-      );
-      plan.nextLine = nextLine;
-    },
-    createDelivery: async (d) => newDelivery(d),
-    markDeliverySent: async (did, messageIds, buttonsMessageId) => {
-      Object.assign(
-        deliveries.find((d) => d.id === did)!,
-        {
-          status: 'sent',
-          messageIds,
-          buttonsMessageId,
-        },
-      );
-    },
-    setDeliveryStatus: async (did, status) => {
-      deliveries.find((d) => d.id === did)!.status = status;
-    },
-    deleteDelivery: async (did) => {
-      deliveries.splice(
-        deliveries.findIndex((d) => d.id === did),
-        1,
-      );
-    },
-    getDelivery: async (did) => {
-      const d = deliveries.find((x) => x.id === did);
-      return d ? { ...d } : null;
-    },
-    updateDeliveryContext: async (did, patch) => {
-      Object.assign(
-        deliveries.find((d) => d.id === did)!,
-        patch,
-      );
-    },
-    openPortionDeliveries: async (pid) =>
-      deliveries.filter((d) => d.portionId === pid && d.status === 'sent'),
-    countPortionDeliveries: async (pid) => deliveries.filter((d) => d.portionId === pid).length,
-    markLearned: async (pid, learnedAt, anchorAt, chain) => {
-      const portion = portions.find((p) => p.id === pid)!;
-      if (portion.status !== 'sent') return false;
-      Object.assign(portion, { status: 'learned', learnedAt, anchorAt });
-      for (const r of reviews) {
-        if (r.portionId === pid && r.stage === 'learn_reminder' && r.status === 'pending') {
-          r.status = 'cancelled';
-        }
-      }
-      for (const c of chain) {
-        reviews.push({ id: ++id, portionId: pid, ...c, status: 'pending' });
-      }
-      return true;
-    },
-    cancelLearnReminder: async (pid) => {
-      for (const r of reviews) {
-        if (r.portionId === pid && r.stage === 'learn_reminder' && r.status === 'pending') {
-          r.status = 'cancelled';
-        }
-      }
-    },
-    rescheduleLearnReminder: async (pid, dueAt) => {
-      const r = reviews.find((x) => x.portionId === pid && x.stage === 'learn_reminder')!;
-      Object.assign(r, { dueAt, status: 'pending' });
-    },
-    dueLearnReminders: async (now) =>
-      reviews
-        .filter((r) => r.stage === 'learn_reminder' && r.status === 'pending' && r.dueAt <= now)
-        .map((r) => ({
-          reviewId: r.id,
-          dueAt: r.dueAt,
-          portion: portions.find((p) => p.id === r.portionId)!,
-          context: context(),
-        }))
-        .filter((r) => r.portion.status === 'sent'),
-    claimLearnReminder: async (rid) => {
-      const r = reviews.find((x) => x.id === rid)!;
-      if (r.status !== 'pending') return false;
-      r.status = 'sent';
-      return true;
-    },
-    releaseLearnReminder: async (rid) => {
-      reviews.find((x) => x.id === rid)!.status = 'pending';
-    },
-    markSkipped: async (_t, numbers) => numbers.forEach((n) => skipped.add(n)),
-    updatePortionRange: async (pid, lineStart, lineEnd) => {
-      Object.assign(
-        portions.find((p) => p.id === pid)!,
-        { lineStart, lineEnd },
-      );
-    },
-    deletePortion: async (pid) => {
-      portions.splice(
-        portions.findIndex((p) => p.id === pid),
-        1,
-      );
-    },
-    updatePlan: async (_pid, patch) => void Object.assign(plan, patch),
-    countUnits: async (_t, from, to) => range(from, to).filter((b) => !b.skipped).length,
-    setBlocked: async (_u, when) => {
-      user.blockedAt = when;
-    },
-  };
-
-  const sent: { kind: string; view?: PortionView; lines?: [number, number][] }[] = [];
-  const cleared: number[] = [];
-  let failNext: SendResult | null = null;
-  let messageId = 1000;
-  const result = (count: number): SendResult => {
-    if (failNext) {
-      const r = failNext;
-      failNext = null;
-      return r;
-    }
-    return {
-      ok: true,
-      messageIds: [++messageId],
-      buttonsMessageId: messageId,
-      fileIds: Array.from({ length: count }, (_, i) => `file${messageId}-${i}`),
-    };
-  };
-  const notifier: Notifier = {
-    sendPortion: async (_u, view, pictures) => {
-      const r = result(pictures.length);
-      if (r.ok)
-        sent.push({ kind: 'portion', view, lines: pictures.map((p) => [p.lineStart, p.lineEnd]) });
-      return r;
-    },
-    sendLearnReminder: async (_u, view) => {
-      const r = result(0);
-      if (r.ok) sent.push({ kind: 'reminder', view });
-      return r;
-    },
-    sendPictures: async (_u, _unit, pictures) => {
-      const r = result(pictures.length);
-      if (r.ok)
-        sent.push({ kind: 'pictures', lines: pictures.map((p) => [p.lineStart, p.lineEnd]) });
-      return r;
-    },
-    sendText: async () => result(0),
-    clearButtons: async (_u, mid) => void cleared.push(mid),
-  };
-
-  const margins: number[] = [];
-  const remembered: string[] = [];
-  const images = {
-    render: async () => [],
-    pictures: async (_text: unknown, boxes: readonly LineBox[], marginSteps = 0) => {
-      margins.push(marginSteps);
-      const pictures: OutgoingPicture[] = [];
-      for (const b of boxes) {
-        const last = pictures.at(-1);
-        if (last && last.lineEnd + 1 === b.lineNumber) last.lineEnd = b.lineNumber;
-        else {
-          pictures.push({
-            page: 1,
-            lineStart: b.lineNumber,
-            lineEnd: b.lineNumber,
-            cacheKey: `k${b.lineNumber}:${marginSteps}`,
-            fileId: null,
-            png: Buffer.from('png'),
-          });
-        }
-      }
-      return pictures;
-    },
-    remember: async (_t: number, entries: { fileId: string }[]) => {
-      remembered.push(...entries.map((e) => e.fileId));
-    },
-  } as unknown as Images;
-
-  const errors: unknown[] = [];
-  const learning = createLearning({
-    store,
-    notifier,
-    images,
-    reportError: (err) => void errors.push(err),
-  });
-  const lastPortionDelivery = () => deliveries.filter((d) => d.kind === 'portion').at(-1)!;
-  return {
-    learning,
-    plan,
-    user,
-    portions,
-    reviews,
-    deliveries,
-    sent,
-    cleared,
-    margins,
-    remembered,
-    errors,
-    skipped,
-    lastPortionDelivery,
-    fail: (r: SendResult) => {
-      failNext = r;
-    },
-  };
-}
+import { at, MAIN, minutes, setup, USER } from './learning.fixture.js';
+import type { PortionAction } from './learning.js';
 
 function expectKind<K extends PortionAction['kind']>(action: PortionAction, kind: K) {
   expect(action.kind).toBe(kind);
@@ -375,7 +10,7 @@ function expectKind<K extends PortionAction['kind']>(action: PortionAction, kind
 describe('выдача порций', () => {
   it('в основной слот — первая порция с напоминанием через 2 часа', async () => {
     const t = setup();
-    expect(await t.learning.tick(MAIN)).toBe(true);
+    expect(await t.tick(MAIN)).toBe(true);
     expect(t.portions).toMatchObject([{ seq: 1, lineStart: 1, lineEnd: 3, status: 'sent' }]);
     expect(t.plan.nextLine).toBe(4);
     expect(t.sent).toMatchObject([
@@ -391,15 +26,15 @@ describe('выдача порций', () => {
     });
     expect(t.remembered).toEqual(['file1001-0']);
     // Второй тик в те же сутки ничего не шлёт.
-    await t.learning.tick(minutes(MAIN, 1));
+    await t.tick(minutes(MAIN, 1));
     expect(t.portions).toHaveLength(1);
   });
 
   it('невыученная порция — долг, новая не приходит; после «Выучил» — в следующий слот', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const nextDay = at('2026-09-17T03:00:00Z');
-    await t.learning.tick(nextDay);
+    await t.tick(nextDay);
     expect(t.portions).toHaveLength(1);
 
     // «Выучил» на следующий день утром: долга нет, в эти сутки порции не было — сразу.
@@ -426,7 +61,7 @@ describe('выдача порций', () => {
 
   it('«Выучил» в тот же день — следующая порция завтра в основной слот', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const learned = expectKind(
       await t.learning.learned(USER, t.lastPortionDelivery().id, minutes(MAIN, 60)),
       'learned',
@@ -441,27 +76,27 @@ describe('выдача порций', () => {
 
   it('наступивший неподтверждённый повтор блокирует новую порцию', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     await t.learning.learned(USER, t.lastPortionDelivery().id, minutes(MAIN, 5));
     // 17.09 06:00: повтор +12 ч (16.09 18:00) не подтверждён.
-    await t.learning.tick(at('2026-09-17T03:00:00Z'));
+    await t.tick(at('2026-09-17T03:00:00Z'));
     expect(t.portions).toHaveLength(1);
     t.reviews.filter((r) => r.stage === 'rep_12h').forEach((r) => (r.status = 'confirmed'));
     // В тот же слот наступил и повтор +1 сутки — тоже долг.
-    await t.learning.tick(at('2026-09-17T03:01:00Z'));
+    await t.tick(at('2026-09-17T03:01:00Z'));
     expect(t.portions).toHaveLength(1);
     t.reviews.filter((r) => r.stage === 'rep_1d').forEach((r) => (r.status = 'confirmed'));
-    await t.learning.tick(at('2026-09-17T03:02:00Z'));
+    await t.tick(at('2026-09-17T03:02:00Z'));
     expect(t.portions).toHaveLength(2);
   });
 
   it('последняя порция короче; после неё план — learning_done', async () => {
     const t = setup({ totalLines: 4 });
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     await t.learning.learned(USER, t.lastPortionDelivery().id, minutes(MAIN, 5));
     for (const r of t.reviews) r.status = 'confirmed';
     const day2 = at('2026-09-17T03:00:00Z');
-    await t.learning.tick(day2);
+    await t.tick(day2);
     expect(t.portions.at(-1)).toMatchObject({ lineStart: 4, lineEnd: 4 });
     expect(t.plan.status).toBe('active');
     const learned = expectKind(
@@ -474,33 +109,33 @@ describe('выдача порций', () => {
 
   it('выходной, пауза и заблокированный бот', async () => {
     const rest = setup({ restDays: [3] });
-    await rest.learning.tick(MAIN);
+    await rest.tick(MAIN);
     expect(rest.portions).toHaveLength(0);
 
     const paused = setup();
     paused.user.pausedFrom = at('2026-09-15T00:00:00Z');
-    await paused.learning.tick(MAIN);
+    await paused.tick(MAIN);
     expect(paused.portions).toHaveLength(0);
     expect(await paused.learning.preview(1, MAIN)).toEqual({ kind: 'paused' });
 
     const blocked = setup();
     blocked.fail({ ok: false, reason: 'blocked', error: new Error('403') });
-    await blocked.learning.tick(MAIN);
+    await blocked.tick(MAIN);
     expect(blocked.portions).toHaveLength(0);
     expect(blocked.plan.nextLine).toBe(1);
     expect(blocked.user.blockedAt).toEqual(MAIN);
-    await blocked.learning.tick(minutes(MAIN, 1));
+    await blocked.tick(minutes(MAIN, 1));
     expect(blocked.portions).toHaveLength(0);
   });
 
   it('ошибка отправки — порция откатывается и уходит следующим тиком', async () => {
     const t = setup();
     t.fail({ ok: false, reason: 'error', error: new Error('500') });
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     expect(t.portions).toHaveLength(0);
     expect(t.plan.nextLine).toBe(1);
     expect(t.errors).toHaveLength(1);
-    await t.learning.tick(minutes(MAIN, 1));
+    await t.tick(minutes(MAIN, 1));
     expect(t.portions).toHaveLength(1);
   });
 
@@ -510,13 +145,13 @@ describe('выдача порций', () => {
       kind: 'at',
       at: MAIN,
     });
-    await t.learning.tick(at('2026-09-16T09:00:00Z'));
+    await t.tick(at('2026-09-16T09:00:00Z'));
     expect(t.portions).toHaveLength(1);
   });
 
   it('одновременный тик пропускается', async () => {
     const t = setup();
-    const [a, b] = await Promise.all([t.learning.tick(MAIN), t.learning.tick(MAIN)]);
+    const [a, b] = await Promise.all([t.tick(MAIN), t.tick(MAIN)]);
     expect([a, b].sort()).toEqual([false, true]);
     expect(t.portions).toHaveLength(1);
   });
@@ -525,11 +160,11 @@ describe('выдача порций', () => {
 describe('напоминание про неотмеченную порцию', () => {
   it('одно напоминание через 2 часа', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
-    await t.learning.tick(minutes(MAIN, 119));
+    await t.tick(MAIN);
+    await t.tick(minutes(MAIN, 119));
     expect(t.sent.filter((s) => s.kind === 'reminder')).toHaveLength(0);
-    await t.learning.tick(minutes(MAIN, 120));
-    await t.learning.tick(minutes(MAIN, 121));
+    await t.tick(minutes(MAIN, 120));
+    await t.tick(minutes(MAIN, 121));
     const reminders = t.sent.filter((s) => s.kind === 'reminder');
     expect(reminders).toHaveLength(1);
     expect(reminders[0]?.view).toMatchObject({ lineStart: 1, lineEnd: 3, count: 3 });
@@ -540,10 +175,10 @@ describe('напоминание про неотмеченную порцию', 
 
   it('«Ещё учу» отменяет, «Напомнить позже» — через час', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const id = t.lastPortionDelivery().id;
     expectKind(await t.learning.stillLearning(USER, id), 'still_learning');
-    await t.learning.tick(minutes(MAIN, 130));
+    await t.tick(minutes(MAIN, 130));
     expect(t.sent.filter((s) => s.kind === 'reminder')).toHaveLength(0);
 
     const later = expectKind(
@@ -551,20 +186,20 @@ describe('напоминание про неотмеченную порцию', 
       'remind_later',
     );
     expect(later.at).toEqual(minutes(MAIN, 190));
-    await t.learning.tick(minutes(MAIN, 190));
+    await t.tick(minutes(MAIN, 190));
     expect(t.sent.filter((s) => s.kind === 'reminder')).toHaveLength(1);
   });
 
   it('ночное напоминание при политике move ждёт утра', async () => {
     const t = setup();
     t.user.nightPolicy = 'move';
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const id = t.lastPortionDelivery().id;
     // «Напомнить позже» в 22:30 МСК → 23:30, это ночь → 07:00.
     const late = at('2026-09-16T19:30:00Z');
     const later = expectKind(await t.learning.remindLater(USER, id, late), 'remind_later');
     expect(later.at).toEqual(at('2026-09-17T04:00:00Z'));
-    await t.learning.tick(minutes(late, 60));
+    await t.tick(minutes(late, 60));
     expect(t.sent.filter((s) => s.kind === 'reminder')).toHaveLength(0);
   });
 });
@@ -572,7 +207,7 @@ describe('напоминание про неотмеченную порцию', 
 describe('кнопки контекста', () => {
   it('«Захватить больше» — до трёх раз с растущим запасом', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const id = t.lastPortionDelivery().id;
     for (let i = 0; i < 3; i++) {
       expectKind(await t.learning.captureMore(USER, id, MAIN), 'context_sent');
@@ -585,7 +220,7 @@ describe('кнопки контекста', () => {
     const t = setup({ totalLines: 8 });
     t.plan.nextLine = 4;
     t.skipped.add(7);
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const id = t.lastPortionDelivery().id; // 4–6
     await t.learning.neighbour(USER, id, 'up', MAIN);
     await t.learning.neighbour(USER, id, 'down', MAIN);
@@ -605,7 +240,7 @@ describe('кнопки контекста', () => {
 
   it('чужая отправка — неактуальна', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     expectKind(await t.learning.captureMore(99n, t.lastPortionDelivery().id, MAIN), 'stale');
     expectKind(await t.learning.learned(USER, 12345, MAIN), 'stale');
   });
@@ -614,7 +249,7 @@ describe('кнопки контекста', () => {
 describe('пропуск единиц', () => {
   it('выбор, замена порции и новая дата окончания', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const first = t.lastPortionDelivery();
     const menu = expectKind(await t.learning.skipMenu(USER, first.id, MAIN), 'skip_menu');
     expect(menu).toMatchObject({ units: [1, 2, 3], mask: 0n });
@@ -635,7 +270,7 @@ describe('пропуск единиц', () => {
 
   it('пропуск из середины: пропущенная единица не показывается', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const id = t.lastPortionDelivery().id;
     expectKind(await t.learning.skip(USER, id, 2n, MAIN), 'skipped'); // единица 2
     expect(t.portions[0]).toMatchObject({ lineStart: 1, lineEnd: 4 });
@@ -647,7 +282,7 @@ describe('пропуск единиц', () => {
 
   it('одна единица в порции — пропускается сразу; «вся порция»', async () => {
     const t = setup({ unitsPerDay: 1, totalLines: 3 });
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const one = expectKind(
       await t.learning.skipMenu(USER, t.lastPortionDelivery().id, MAIN),
       'skipped',
@@ -655,7 +290,7 @@ describe('пропуск единиц', () => {
     expect(one.portion).toMatchObject({ lineStart: 2, lineEnd: 2 });
 
     const all = setup();
-    await all.learning.tick(MAIN);
+    await all.tick(MAIN);
     const r = expectKind(
       await all.learning.skip(USER, all.lastPortionDelivery().id, null, MAIN),
       'skipped',
@@ -666,7 +301,7 @@ describe('пропуск единиц', () => {
 
   it('учить больше нечего — порция удаляется, план закончен', async () => {
     const t = setup({ totalLines: 2 });
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const r = expectKind(
       await t.learning.skip(USER, t.lastPortionDelivery().id, null, MAIN),
       'skipped',
@@ -678,7 +313,7 @@ describe('пропуск единиц', () => {
 
   it('выученную порцию пропустить нельзя', async () => {
     const t = setup();
-    await t.learning.tick(MAIN);
+    await t.tick(MAIN);
     const id = t.lastPortionDelivery().id;
     await t.learning.learned(USER, id, MAIN);
     expectKind(await t.learning.skipMenu(USER, id, MAIN), 'already_learned');

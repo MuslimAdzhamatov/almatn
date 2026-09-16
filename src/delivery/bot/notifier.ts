@@ -1,7 +1,9 @@
 import { GrammyError, type Api } from 'grammy';
 import type { Notifier, NotifierPicture, SendResult, UnitLabel } from '../../app/ports.js';
 import { sendImages } from './images.js';
+import type { RenderedMessage } from './views/onboarding.js';
 import { pictureCaption, portionMessage, reminderMessage } from './views/learning.js';
+import { batchMessage } from './views/reviews.js';
 
 // Отправка сообщений планировщиком (CLAUDE.md, раздел 5.6): сценарии не знают про Telegram.
 
@@ -32,19 +34,31 @@ function images(unit: UnitLabel, pictures: readonly NotifierPicture[]) {
 
 /** api передаётся функцией: бот создаётся после сценариев, которым нужен Notifier. */
 export function createNotifier(api: () => Api): Notifier {
+  /** Картинки, затем сообщение с кнопками (у альбома кнопок быть не может). */
+  const withButtons = (
+    userId: bigint,
+    unit: UnitLabel,
+    pictures: readonly NotifierPicture[],
+    message: RenderedMessage,
+  ) =>
+    attempt(async () => {
+      const chatId = Number(userId);
+      const sent = await sendImages(api(), chatId, images(unit, pictures));
+      const buttons = await api().sendMessage(chatId, message.text, {
+        reply_markup: message.keyboard,
+      });
+      return {
+        messageIds: [...sent.messageIds, buttons.message_id],
+        buttonsMessageId: buttons.message_id,
+        fileIds: sent.fileIds,
+      };
+    });
+
   return {
     sendPortion: (userId, view, pictures) =>
-      attempt(async () => {
-        const chatId = Number(userId);
-        const sent = await sendImages(api(), chatId, images(view, pictures));
-        const { text, keyboard } = portionMessage(view);
-        const buttons = await api().sendMessage(chatId, text, { reply_markup: keyboard });
-        return {
-          messageIds: [...sent.messageIds, buttons.message_id],
-          buttonsMessageId: buttons.message_id,
-          fileIds: sent.fileIds,
-        };
-      }),
+      withButtons(userId, view, pictures, portionMessage(view)),
+
+    sendBatch: (userId, view, pictures) => withButtons(userId, view, pictures, batchMessage(view)),
 
     sendLearnReminder: (userId, view) =>
       attempt(async () => {

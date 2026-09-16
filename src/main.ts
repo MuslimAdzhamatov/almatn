@@ -4,8 +4,10 @@ import { createImages } from './app/images.js';
 import { createLearning } from './app/learning.js';
 import { createOnboarding } from './app/onboarding.js';
 import { createPlans } from './app/plans.js';
+import { createReviews } from './app/reviews.js';
 import type { PdfTools } from './app/ports.js';
 import { createTexts } from './app/texts.js';
+import { createTick } from './app/tick.js';
 import { env } from './config/env.js';
 import { limits } from './config/limits.js';
 import { extractWords, pdfInfo, renderPage, renderPages } from './core/pdf/poppler.js';
@@ -59,14 +61,32 @@ async function main(): Promise<void> {
 
   // Notifier получает api лениво: бот создаётся ниже, а сценариям Notifier нужен уже сейчас.
   let botApi: Bot['api'] | null = null;
+  const learningStore = createLearningRepository(db);
+  const notifier = createNotifier(() => {
+    if (!botApi) throw new Error('Бот ещё не создан');
+    return botApi;
+  });
+  const images = createImages({ files, tools: pdfTools, cache: createCropCacheRepository(db) });
   const learning = createLearning({
-    store: createLearningRepository(db),
-    notifier: createNotifier(() => {
-      if (!botApi) throw new Error('Бот ещё не создан');
-      return botApi;
-    }),
-    images: createImages({ files, tools: pdfTools, cache: createCropCacheRepository(db) }),
+    store: learningStore,
+    notifier,
+    images,
     reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка выдачи порции'),
+  });
+  const reviews = createReviews({
+    store: learningStore,
+    notifier,
+    images,
+    learning,
+    reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка сводного повтора'),
+  });
+  const tick = createTick({
+    withLock: (fn) => learningStore.withTickLock(fn),
+    steps: [
+      { name: 'reviews', run: reviews.runDue },
+      { name: 'portions', run: learning.runDue },
+    ],
+    reportError: (err, context) => logger.error({ err, ...context }, 'Ошибка шага тика'),
   });
 
   // До приёма сообщений: загрузок и разборов ещё нет, всё во tmp/ и work-* — остатки прошлого запуска.
@@ -81,6 +101,7 @@ async function main(): Promise<void> {
     texts,
     plans,
     learning,
+    reviews,
     files,
     logger,
   });
@@ -93,8 +114,7 @@ async function main(): Promise<void> {
   let currentTick: Promise<void> | null = null;
   const runTick = () => {
     if (currentTick) return;
-    currentTick = learning
-      .tick(new Date())
+    currentTick = tick(new Date())
       .then((ran) => {
         if (!ran) logger.debug('Тик пропущен: его выполняет другой экземпляр');
       })

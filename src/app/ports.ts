@@ -5,6 +5,7 @@ import type { PdfPageWords } from '../core/pdf/bbox.js';
 import type { PixelRect } from '../core/pdf/crop.js';
 import type { GrayImage, LineBox } from '../core/pdf/layout.js';
 import type { NumberingAnomaly } from '../core/pdf/numbers.js';
+import type { UnitRange } from '../core/srs/ranges.js';
 import type { NightPolicy } from '../core/time/schedule.js';
 
 // ——— Пользователь и диалоги ———
@@ -251,6 +252,18 @@ export interface UnitRow {
   skipped: boolean;
 }
 
+/** Повтор вместе с границами его порции. */
+export interface ReviewRow {
+  id: number;
+  portionId: number;
+  dueAt: Date;
+  status: ReviewStatusName;
+  lineStart: number;
+  lineEnd: number;
+}
+
+export const BATCH_KINDS = ['review_batch', 'debt_reminder'] as const satisfies DeliveryKindName[];
+
 /** Единица с координатами и признаком пропуска. */
 export type UnitBox = LineBox & { skipped: boolean };
 
@@ -278,13 +291,28 @@ export interface LearningStore {
   /** Выполняет fn под advisory lock; null — блокировку держит другой тик. */
   withTickLock<T>(fn: () => Promise<T>): Promise<T | null>;
   listActivePlans(): Promise<PlanContext[]>;
+  /** Планы, по которым ещё идут порции или повторы (active | learning_done). */
+  listOpenPlans(): Promise<PlanContext[]>;
   planContext(planId: number): Promise<PlanContext | null>;
+  /** Открытый план текста. */
+  textPlanContext(textId: number): Promise<PlanContext | null>;
   lastPortion(planId: number): Promise<PortionRecord | null>;
   getPortion(portionId: number): Promise<PortionRecord | null>;
   /** Невыученная порция плана (статус sent), если есть. */
   unlearnedPortion(planId: number): Promise<PortionRecord | null>;
-  /** Повторы (без learn_reminder) всех порций текста. */
-  textReviews(textId: number): Promise<{ dueAt: Date; status: ReviewStatusName }[]>;
+  /** Неподтверждённые повторы (pending | sent | missed, без learn_reminder) всех порций текста. */
+  textReviews(textId: number): Promise<ReviewRow[]>;
+  /** Повторы, последняя отправка которых — deliveryId (в любом статусе). */
+  deliveryReviews(deliveryId: number): Promise<ReviewRow[]>;
+  /** Повторы попали в отправку: статус sent, deliveryId перезаписывается. */
+  attachReviews(deliveryId: number, reviewIds: readonly number[], at: Date): Promise<void>;
+  /**
+   * Ответ на сводку: confirmed — повторы отправки в статусе sent | missed,
+   * missed — в статусе sent. Возвращает, сколько повторов изменилось.
+   */
+  answerReviews(deliveryId: number, answer: 'confirmed' | 'missed', at: Date): Promise<number>;
+  /** Сводки текста, у которых ещё есть кнопки (sent). */
+  openBatchDeliveries(textId: number): Promise<DeliveryRecord[]>;
   unitRows(textId: number, from: number, to: number): Promise<UnitRow[]>;
   unitBoxes(textId: number, from: number, to: number): Promise<UnitBox[]>;
   /** Порция + learn_reminder + запись об отправке + сдвиг nextLine одной транзакцией; null — гонка. */
@@ -316,7 +344,7 @@ export interface LearningStore {
     deliveryId: number,
     patch: Partial<Pick<DeliveryRecord, 'cropMarginSteps' | 'extraBefore' | 'extraAfter'>>,
   ): Promise<void>;
-  /** Отправки порции, у которых ещё есть кнопки (sent). */
+  /** Сообщения порции и напоминания о ней, у которых ещё есть кнопки (sent); сводки не входят. */
   openPortionDeliveries(portionId: number): Promise<DeliveryRecord[]>;
   countPortionDeliveries(portionId: number): Promise<number>;
   /**
@@ -382,6 +410,26 @@ export interface PortionView extends UnitLabel {
   replaced: boolean;
 }
 
+export type BatchKind = 'review' | 'debt' | 'evening';
+
+/** Что сейчас показывать под сводкой: отметка повторов и «Выучил» — пока есть на что отвечать. */
+export interface BatchButtons {
+  confirm: boolean;
+  learn: UnitRange | null;
+}
+
+/** Сводный повтор или напоминание о долге по одному тексту. */
+export interface BatchView extends UnitLabel {
+  deliveryId: number;
+  title: string;
+  kind: BatchKind;
+  /** Объединённые диапазоны повторов. */
+  reviews: UnitRange[];
+  /** Невыученная порция. */
+  portion: UnitRange | null;
+  buttons: BatchButtons;
+}
+
 /**
  * Отправка сообщений пользователю. Сценарии и планировщик не знают про Telegram —
  * реализация в delivery/bot/notifier.ts.
@@ -393,6 +441,12 @@ export interface Notifier {
     pictures: readonly NotifierPicture[],
   ): Promise<SendResult>;
   sendLearnReminder(userId: bigint, view: PortionView): Promise<SendResult>;
+  /** Сводный повтор / напоминание о долге: картинки, затем сообщение с кнопками. */
+  sendBatch(
+    userId: bigint,
+    view: BatchView,
+    pictures: readonly NotifierPicture[],
+  ): Promise<SendResult>;
   /** Дополнительные картинки (кнопки контекста). */
   sendPictures(
     userId: bigint,

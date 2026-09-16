@@ -1,9 +1,11 @@
-import type {
-  CropCacheStore,
-  DeliveryRecord,
-  LearningStore,
-  PlanContext,
-  PortionRecord,
+import {
+  BATCH_KINDS,
+  type CropCacheStore,
+  type DeliveryRecord,
+  type LearningStore,
+  type PlanContext,
+  type PortionRecord,
+  type ReviewRow,
 } from '../../app/ports.js';
 import { isoToDbDate } from '../../core/plan/dates.js';
 import {
@@ -12,6 +14,7 @@ import {
   type Line,
   type LineFragment,
   type Plan,
+  type PlanStatus,
   type Portion,
   type Text,
   type User,
@@ -72,6 +75,25 @@ const toPortion = (row: Portion): PortionRecord => ({
   anchorAt: row.anchorAt,
 });
 
+const reviewSelect = {
+  id: true,
+  portionId: true,
+  dueAt: true,
+  status: true,
+  portion: { select: { lineStart: true, lineEnd: true } },
+} as const;
+
+const toReviewRow = ({
+  portion,
+  ...row
+}: {
+  id: number;
+  portionId: number;
+  dueAt: Date;
+  status: ReviewRow['status'];
+  portion: { lineStart: number; lineEnd: number };
+}): ReviewRow => ({ ...row, ...portion });
+
 const toDelivery = (row: Delivery): DeliveryRecord => ({
   id: row.id,
   userId: row.userId,
@@ -110,6 +132,19 @@ export function createLearningRepository(db: Db): LearningStore {
     portionId_stage: { portionId, stage: 'learn_reminder' as const },
   });
 
+  async function listPlans(statuses: PlanStatus[]) {
+    const rows = await db.plan.findMany({
+      where: {
+        status: { in: statuses },
+        text: { status: 'ready' },
+        user: { onboardedAt: { not: null }, blockedAt: null },
+      },
+      include: planInclude,
+      orderBy: { id: 'asc' },
+    });
+    return rows.map(toContext).filter((ctx) => ctx !== null);
+  }
+
   return {
     async withTickLock(fn) {
       return db.$transaction(
@@ -122,17 +157,16 @@ export function createLearningRepository(db: Db): LearningStore {
       );
     },
 
-    async listActivePlans() {
-      const rows = await db.plan.findMany({
-        where: {
-          status: 'active',
-          text: { status: 'ready' },
-          user: { onboardedAt: { not: null }, blockedAt: null },
-        },
+    listActivePlans: () => listPlans(['active']),
+
+    listOpenPlans: () => listPlans(['active', 'learning_done']),
+
+    async textPlanContext(textId) {
+      const row = await db.plan.findFirst({
+        where: { textId, status: { in: ['active', 'learning_done'] } },
         include: planInclude,
-        orderBy: { id: 'asc' },
       });
-      return rows.map(toContext).filter((ctx) => ctx !== null);
+      return row ? toContext(row) : null;
     },
 
     async planContext(planId) {
@@ -159,14 +193,59 @@ export function createLearningRepository(db: Db): LearningStore {
     },
 
     async textReviews(textId) {
-      return db.review.findMany({
+      const rows = await db.review.findMany({
         where: {
           stage: { not: 'learn_reminder' },
           status: { in: ['pending', 'sent', 'missed'] },
           portion: { plan: { textId } },
         },
-        select: { dueAt: true, status: true },
+        select: reviewSelect,
+        orderBy: [{ dueAt: 'asc' }, { id: 'asc' }],
       });
+      return rows.map(toReviewRow);
+    },
+
+    async deliveryReviews(deliveryId) {
+      const rows = await db.review.findMany({
+        where: { deliveryId, stage: { not: 'learn_reminder' } },
+        select: reviewSelect,
+        orderBy: { id: 'asc' },
+      });
+      return rows.map(toReviewRow);
+    },
+
+    async attachReviews(deliveryId, reviewIds, at) {
+      if (reviewIds.length === 0) return;
+      await db.review.updateMany({
+        where: { id: { in: [...reviewIds] }, status: { in: ['pending', 'sent', 'missed'] } },
+        data: { status: 'sent', sentAt: at, deliveryId },
+      });
+    },
+
+    async answerReviews(deliveryId, answer, at) {
+      return db.$transaction(async (tx) => {
+        const updated = await tx.review.updateMany({
+          where: {
+            deliveryId,
+            stage: { not: 'learn_reminder' },
+            status: { in: answer === 'confirmed' ? ['sent', 'missed'] : ['sent'] },
+          },
+          data:
+            answer === 'confirmed'
+              ? { status: 'confirmed', confirmedAt: at }
+              : { status: 'missed' },
+        });
+        await tx.delivery.update({ where: { id: deliveryId }, data: { answeredAt: at } });
+        return updated.count;
+      });
+    },
+
+    async openBatchDeliveries(textId) {
+      const rows = await db.delivery.findMany({
+        where: { textId, kind: { in: [...BATCH_KINDS] }, status: 'sent' },
+        orderBy: { id: 'asc' },
+      });
+      return rows.map(toDelivery);
     },
 
     async unitRows(textId, from, to) {
@@ -263,7 +342,9 @@ export function createLearningRepository(db: Db): LearningStore {
     },
 
     async openPortionDeliveries(portionId) {
-      const rows = await db.delivery.findMany({ where: { portionId, status: 'sent' } });
+      const rows = await db.delivery.findMany({
+        where: { portionId, status: 'sent', kind: { in: ['portion', 'learn_reminder'] } },
+      });
       return rows.map(toDelivery);
     },
 

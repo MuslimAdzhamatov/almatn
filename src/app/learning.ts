@@ -1,5 +1,6 @@
 import { limits } from '../config/limits.js';
 import type { IsoDate } from '../core/plan/dates.js';
+import { debtSince, isQuietDebt } from '../core/scheduler/batch.js';
 import {
   decideIssue,
   estimateEndDate,
@@ -7,6 +8,7 @@ import {
   pickPortion,
   type IssueDecision,
 } from '../core/scheduler/rules.js';
+import type { UnitRange } from '../core/srs/ranges.js';
 import {
   applyQuietHours,
   nearestSlot,
@@ -15,17 +17,20 @@ import {
   type ScheduledStage,
 } from '../core/srs/slots.js';
 import type { Images, OutgoingPicture } from './images.js';
-import type {
-  DeliveryRecord,
-  LearnerSettings,
-  LearningStore,
-  Notifier,
-  PlanContext,
-  PortionRecord,
-  PortionView,
-  SendResult,
-  UnitLabel,
+import {
+  BATCH_KINDS,
+  type DeliveryRecord,
+  type LearnerSettings,
+  type LearningStore,
+  type Notifier,
+  type PlanContext,
+  type PortionRecord,
+  type PortionView,
+  type SendResult,
+  type UnitLabel,
 } from './ports.js';
+import { rememberPictures, settleSend, toNotifier } from './sending.js';
+import { boxesIn, deliveryUnits } from './units.js';
 
 // Выдача порций и ответы на них (CLAUDE.md, разделы 4.1, 5, 5.2, 5.6):
 // тик планировщика, «Выучил» / «Ещё учу» / «Напомнить позже», пропуск единиц и кнопки контекста.
@@ -90,17 +95,20 @@ export type PortionAction =
   | { kind: 'failed' }
   | { kind: 'stale' };
 
-const isPaused = (user: LearnerSettings, now: Date) =>
+export const isPaused = (user: LearnerSettings, now: Date) =>
   user.pausedFrom !== null &&
   user.pausedFrom <= now &&
   (user.pausedUntil === null || user.pausedUntil > now);
 
-const unitLabel = (ctx: PlanContext): UnitLabel => ({
+export const unitLabel = (ctx: PlanContext): UnitLabel => ({
   unitName: ctx.text.unitName,
   strategy: ctx.text.parseStrategy,
 });
 
-function portionInfo(ctx: PlanContext, portion: Pick<PortionRecord, 'lineStart' | 'lineEnd'>) {
+export function portionInfo(
+  ctx: PlanContext,
+  portion: Pick<PortionRecord, 'lineStart' | 'lineEnd'>,
+) {
   return {
     ...unitLabel(ctx),
     title: ctx.text.title,
@@ -109,9 +117,6 @@ function portionInfo(ctx: PlanContext, portion: Pick<PortionRecord, 'lineStart' 
     timezone: ctx.user.timezone,
   };
 }
-
-const toNotifier = (pictures: readonly OutgoingPicture[]) =>
-  pictures.map(({ fileId, png, lineStart, lineEnd }) => ({ fileId, png, lineStart, lineEnd }));
 
 export function parseMask(value: string): bigint | null {
   return /^[0-9a-f]{1,16}$/.test(value) ? BigInt(`0x${value}`) : null;
@@ -162,29 +167,21 @@ export function createLearning({
     await store.updatePlan(ctx.plan.id, { status: 'learning_done' });
   }
 
-  /** Результат отправки: file_id — в кэш, 403 — пользователь заблокировал бота. */
-  async function handleSent(
+  const sending = { store, images, reportError };
+  const settle = (
     ctx: PlanContext,
     result: SendResult,
     deliveryId: number,
     pictures: readonly OutgoingPicture[],
     now: Date,
-  ): Promise<boolean> {
-    if (result.ok) {
-      await store.markDeliverySent(deliveryId, result.messageIds, result.buttonsMessageId, now);
-      await images.remember(
-        ctx.text.id,
-        pictures.flatMap((picture, index) => {
-          const fileId = result.fileIds[index];
-          return picture.png && fileId ? [{ cacheKey: picture.cacheKey, fileId }] : [];
-        }),
-      );
-      return true;
-    }
-    if (result.reason === 'blocked') await store.setBlocked(ctx.user.userId, now);
-    else reportError(result.error, { deliveryId, planId: ctx.plan.id });
-    return false;
-  }
+  ) =>
+    settleSend(
+      sending,
+      { userId: ctx.user.userId, textId: ctx.text.id, deliveryId },
+      result,
+      pictures,
+      now,
+    );
 
   async function sendPortion(
     ctx: PlanContext,
@@ -193,9 +190,7 @@ export function createLearning({
     replaced: boolean,
     now: Date,
   ): Promise<boolean> {
-    const boxes = (await store.unitBoxes(ctx.text.id, portion.lineStart, portion.lineEnd)).filter(
-      (box) => !box.skipped,
-    );
+    const boxes = await boxesIn(store, ctx.text.id, [portion]);
     const pictures = await images.pictures(ctx.text, boxes);
     const view: PortionView = {
       ...portionInfo(ctx, portion),
@@ -204,7 +199,7 @@ export function createLearning({
       replaced,
     };
     const result = await notifier.sendPortion(ctx.user.userId, view, toNotifier(pictures));
-    return handleSent(ctx, result, deliveryId, pictures, now);
+    return settle(ctx, result, deliveryId, pictures, now);
   }
 
   /** Выдать следующую порцию плана сейчас (правило уже проверено). */
@@ -266,6 +261,9 @@ export function createLearning({
       const { context: ctx, portion } = due;
       if (isPaused(ctx.user, now) || ctx.user.blockedAt) continue;
       if (applyQuietHours(due.dueAt, ctx.user) > now) continue;
+      // Долг тянется 3 плановых суток — по тексту только сообщение основного слота.
+      const owed = await store.textReviews(ctx.text.id);
+      if (isQuietDebt(debtSince(now, owed, portion), now, ctx.user)) continue;
       if (!(await store.claimLearnReminder(due.reviewId))) continue;
       const deliveryId = await store.createDelivery({
         userId: ctx.user.userId,
@@ -285,7 +283,7 @@ export function createLearning({
           count,
           replaced: false,
         });
-        ok = await handleSent(ctx, result, deliveryId, [], now);
+        ok = await settle(ctx, result, deliveryId, [], now);
         if (!result.ok && result.reason === 'blocked') ok = true;
       } catch (err) {
         reportError(err, { reviewId: due.reviewId });
@@ -304,42 +302,60 @@ export function createLearning({
   }
 
   /** Отправка с кнопками, принадлежащая пользователю и ещё актуальная. */
-  async function resolve(userId: bigint, deliveryId: number): Promise<Resolved | null> {
+  async function openDelivery(userId: bigint, deliveryId: number) {
     const delivery = await store.getDelivery(deliveryId);
-    if (!delivery || delivery.userId !== userId || delivery.status !== 'sent') return null;
-    if (delivery.portionId === null) return null;
+    return delivery?.userId === userId && delivery.status === 'sent' ? delivery : null;
+  }
+
+  /** Отправка, у которой есть порция: сообщение порции, напоминание или сводка с долгом. */
+  async function resolve(userId: bigint, deliveryId: number): Promise<Resolved | null> {
+    const delivery = await openDelivery(userId, deliveryId);
+    if (!delivery || delivery.portionId === null) return null;
     const portion = await store.getPortion(delivery.portionId);
     if (!portion) return null;
     const ctx = await store.planContext(portion.planId);
     return ctx ? { delivery, portion, ctx } : null;
   }
 
+  interface ContextTarget {
+    delivery: DeliveryRecord;
+    ctx: PlanContext;
+    /** Что показывает сообщение — от этого считаются «Захватить больше» и соседние единицы. */
+    ranges: UnitRange[];
+  }
+
+  /** Сообщение с кнопками контекста: порция или сводка (CLAUDE.md, раздел 4.1). */
+  async function contextTarget(userId: bigint, deliveryId: number): Promise<ContextTarget | null> {
+    const delivery = await openDelivery(userId, deliveryId);
+    if (!delivery || delivery.textId === null) return null;
+    const isBatch = (BATCH_KINDS as readonly string[]).includes(delivery.kind);
+    if (delivery.kind !== 'portion' && !isBatch) return null;
+    const ctx = await store.textPlanContext(delivery.textId);
+    if (!ctx) return null;
+    const { all } = await deliveryUnits(store, ctx.text.id, delivery);
+    return all.length > 0 ? { delivery, ctx, ranges: all } : null;
+  }
+
   async function sendExtra(
-    r: Resolved,
-    from: number,
-    to: number,
+    target: ContextTarget,
+    ranges: readonly UnitRange[],
     marginSteps: number,
     now: Date,
   ): Promise<PortionAction> {
-    const boxes = (await store.unitBoxes(r.ctx.text.id, from, to)).filter((box) => !box.skipped);
-    const pictures = await images.pictures(r.ctx.text, boxes, marginSteps);
+    const { ctx } = target;
+    const boxes = await boxesIn(store, ctx.text.id, ranges);
+    const pictures = await images.pictures(ctx.text, boxes, marginSteps);
     const result = await notifier.sendPictures(
-      r.ctx.user.userId,
-      unitLabel(r.ctx),
+      ctx.user.userId,
+      unitLabel(ctx),
       toNotifier(pictures),
     );
     if (result.ok) {
-      await images.remember(
-        r.ctx.text.id,
-        pictures.flatMap((picture, index) => {
-          const fileId = result.fileIds[index];
-          return picture.png && fileId ? [{ cacheKey: picture.cacheKey, fileId }] : [];
-        }),
-      );
+      await rememberPictures(images, ctx.text.id, pictures, result);
       return { kind: 'context_sent' };
     }
-    if (result.reason === 'blocked') await store.setBlocked(r.ctx.user.userId, now);
-    else reportError(result.error, { deliveryId: r.delivery.id });
+    if (result.reason === 'blocked') await store.setBlocked(ctx.user.userId, now);
+    else reportError(result.error, { deliveryId: target.delivery.id });
     return { kind: 'failed' };
   }
 
@@ -414,21 +430,17 @@ export function createLearning({
   }
 
   return {
-    /** Тик планировщика: новые порции и напоминания про неотмеченные порции. */
-    async tick(now: Date): Promise<boolean> {
-      const ran = await store.withTickLock(async () => {
-        for (const ctx of await store.listActivePlans()) {
-          if (ctx.user.blockedAt || isPaused(ctx.user, now)) continue;
-          try {
-            if ((await decide(ctx, now)).kind === 'now') await issue(ctx, now);
-          } catch (err) {
-            reportError(err, { planId: ctx.plan.id });
-          }
+    /** Шаг тика (app/tick.ts): новые порции и напоминания про неотмеченные порции. */
+    async runDue(now: Date): Promise<void> {
+      for (const ctx of await store.listActivePlans()) {
+        if (ctx.user.blockedAt || isPaused(ctx.user, now)) continue;
+        try {
+          if ((await decide(ctx, now)).kind === 'now') await issue(ctx, now);
+        } catch (err) {
+          reportError(err, { planId: ctx.plan.id });
         }
-        await sendLearnReminders(now);
-        return true;
-      });
-      return ran !== null;
+      }
+      await sendLearnReminders(now);
     },
 
     /** Когда придёт порция плана — без отправки (для сообщения «План создан»). */
@@ -503,13 +515,13 @@ export function createLearning({
 
     /** «Захватить больше»: та же порция с вертикальным запасом. */
     async captureMore(userId: bigint, deliveryId: number, now: Date): Promise<PortionAction> {
-      const r = await resolve(userId, deliveryId);
-      if (!r || r.delivery.kind !== 'portion') return { kind: 'stale' };
-      const steps = r.delivery.cropMarginSteps + 1;
+      const target = await contextTarget(userId, deliveryId);
+      if (!target) return { kind: 'stale' };
+      const steps = target.delivery.cropMarginSteps + 1;
       if (steps > L.maxMarginSteps) {
         return { kind: 'context_limit', direction: 'more', max: L.maxMarginSteps };
       }
-      const result = await sendExtra(r, r.portion.lineStart, r.portion.lineEnd, steps, now);
+      const result = await sendExtra(target, target.ranges, steps, now);
       if (result.kind === 'context_sent') {
         await store.updateDeliveryContext(deliveryId, { cropMarginSteps: steps });
       }
@@ -523,20 +535,24 @@ export function createLearning({
       direction: 'up' | 'down',
       now: Date,
     ): Promise<PortionAction> {
-      const r = await resolve(userId, deliveryId);
-      if (!r || r.delivery.kind !== 'portion') return { kind: 'stale' };
-      const count = (direction === 'up' ? r.delivery.extraBefore : r.delivery.extraAfter) + 1;
+      const target = await contextTarget(userId, deliveryId);
+      if (!target) return { kind: 'stale' };
+      const { delivery, ctx, ranges } = target;
+      const count = (direction === 'up' ? delivery.extraBefore : delivery.extraAfter) + 1;
       if (count > L.maxExtraUnits) {
         return { kind: 'context_limit', direction, max: L.maxExtraUnits };
       }
+      const first = ranges[0]!.lineStart;
+      const last = ranges.at(-1)!.lineEnd;
       const rows =
         direction === 'up'
-          ? await store.unitRows(r.ctx.text.id, 1, r.portion.lineStart - 1)
-          : await store.unitRows(r.ctx.text.id, r.portion.lineEnd + 1, r.ctx.text.totalLines);
+          ? await store.unitRows(ctx.text.id, 1, first - 1)
+          : await store.unitRows(ctx.text.id, last + 1, ctx.text.totalLines);
       const candidates = rows.filter((row) => !row.skipped);
-      const target = direction === 'up' ? candidates.at(-count) : candidates[count - 1];
-      if (!target) return { kind: 'context_edge', direction, unit: unitLabel(r.ctx) };
-      const result = await sendExtra(r, target.lineNumber, target.lineNumber, 0, now);
+      const unit = direction === 'up' ? candidates.at(-count) : candidates[count - 1];
+      if (!unit) return { kind: 'context_edge', direction, unit: unitLabel(ctx) };
+      const range = { lineStart: unit.lineNumber, lineEnd: unit.lineNumber };
+      const result = await sendExtra(target, [range], 0, now);
       if (result.kind === 'context_sent') {
         await store.updateDeliveryContext(
           deliveryId,

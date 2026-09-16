@@ -5,6 +5,7 @@ import type { BotCommand } from 'grammy/types';
 import type { Learning } from '../../app/learning.js';
 import type { Onboarding } from '../../app/onboarding.js';
 import type { Plans } from '../../app/plans.js';
+import type { Reviews } from '../../app/reviews.js';
 import type { FileStore } from '../../app/ports.js';
 import type { Texts } from '../../app/texts.js';
 import type { UsersRepository } from '../../db/repositories/users.js';
@@ -13,6 +14,7 @@ import type { BotContext } from './context.js';
 import { registerLearning } from './handlers/learning.js';
 import { registerOnboarding } from './handlers/onboarding.js';
 import { registerPlans, type PlansHandlers } from './handlers/plans.js';
+import { registerReviews } from './handlers/reviews.js';
 import { registerTexts } from './handlers/texts.js';
 import { texts } from './texts.js';
 
@@ -22,6 +24,7 @@ export interface BotDeps {
   texts: Texts;
   plans: Plans;
   learning: Learning;
+  reviews: Reviews;
   files: FileStore;
   logger: Logger;
 }
@@ -61,6 +64,7 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
   registerOnboarding(bot, deps.onboarding, { onFinished: textsHandlers.processPending });
   plansHandlers = registerPlans(bot, deps.plans, deps.learning);
   registerLearning(bot, deps.learning);
+  registerReviews(bot, deps.reviews);
 
   bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);
