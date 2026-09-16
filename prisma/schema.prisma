@@ -33,13 +33,17 @@ enum ParseStrategy {
   manual_split
 }
 
-/** Из чего сделан текст: PDF или присланные картинки (страницы — файлы изображений). */
+/**
+ * Из чего сделан текст: PDF или присланные картинки (страницы — файлы изображений).
+ */
 enum SourceKind {
   pdf
   images
 }
 
-/** Вид фрагмента единицы: сам текст или заголовок раздела перед ним. */
+/**
+ * Вид фрагмента единицы: сам текст или заголовок раздела перед ним.
+ */
 enum FragmentKind {
   text
   heading
@@ -102,6 +106,7 @@ enum DeliveryStatus {
   confirmed
   missed
   failed
+  replaced // порция заменена после «Пропустить»: кнопки этой отправки неактуальны
 }
 
 model User {
@@ -181,6 +186,7 @@ model Line {
   printedNumber      Int? // как напечатано в PDF
   page               Int // страница первого фрагмента, с 1
   sectionBreakBefore Boolean @default(false)
+  skipped            Boolean @default(false) // пользователь пропустил единицу: не выдаётся и не повторяется
 
   text      Text           @relation(fields: [textId], references: [id], onDelete: Cascade)
   fragments LineFragment[]
@@ -320,6 +326,9 @@ model Delivery {
   answeredAt       DateTime?
   messageIds       Int[] // все сообщения: альбомы + сообщение с кнопками
   buttonsMessageId Int? // для editMessageReplyMarkup
+  cropMarginSteps  Int            @default(0) // «Захватить больше»: сколько раз расширяли вырезку
+  extraBefore      Int            @default(0) // «Ещё выше»: сколько соседних единиц уже прислано
+  extraAfter       Int            @default(0) // «Ещё ниже»
 
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   text    Text?    @relation(fields: [textId], references: [id], onDelete: Cascade)
