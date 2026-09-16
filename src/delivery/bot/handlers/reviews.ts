@@ -38,6 +38,7 @@ async function show(ctx: BotContext, action: BatchAction) {
       await ctx.answerCallbackQuery();
       await redraw(ctx, state);
       const lines = [t.confirmed(state.title)];
+      if (action.planCompleted) lines.push(t.planCompleted(state.title));
       if (action.next) lines.push(nextPortionText(action.next, state.timezone));
       await ctx.reply(lines.join('\n\n'));
       return;

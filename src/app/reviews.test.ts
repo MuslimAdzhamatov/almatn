@@ -338,3 +338,55 @@ describe('долг дольше 3 плановых суток', () => {
     expect(t.sent.filter((s) => s.kind === 'reminder')).toHaveLength(0);
   });
 });
+
+describe('закрытие цепочки', () => {
+  it('после повтора через месяц порция закрыта, закрыты все — закрыт план', async () => {
+    const t = setup();
+    addLearned(t, 1, 1, 6, [{ dueAt: at('2026-09-10T03:00:00Z'), status: 'confirmed' }]);
+    addLearned(t, 2, 7, 12, []);
+    t.plan.status = 'learning_done';
+    t.reviews.push(
+      { id: 7001, portionId: 901, stage: 'rep_1m', dueAt: SECOND, status: 'pending' },
+      { id: 7002, portionId: 902, stage: 'rep_2w', dueAt: SECOND, status: 'pending' },
+    );
+    await t.tick(SECOND);
+    const first = batchDeliveries(t)[0]!.id;
+    const partly = expectKind(
+      await t.reviewsApp.answer(USER, first, 'confirmed', SECOND),
+      'answered',
+    );
+    expect(partly.planCompleted).toBe(false);
+    expect(t.portions.map((p) => p.status)).toEqual(['completed', 'learned']);
+    expect(t.plan.status).toBe('learning_done');
+
+    t.reviews.push({
+      id: 7003,
+      portionId: 902,
+      stage: 'rep_1m',
+      dueAt: MAIN_17,
+      status: 'pending',
+    });
+    await t.tick(MAIN_17);
+    const last = batchDeliveries(t)[1]!.id;
+    const done = expectKind(
+      await t.reviewsApp.answer(USER, last, 'confirmed', MAIN_17),
+      'answered',
+    );
+    expect(done).toMatchObject({ planCompleted: true, next: null });
+    expect(t.plan.status).toBe('completed');
+    expect(t.portions.every((p) => p.status === 'completed')).toBe(true);
+  });
+
+  it('«Не успел(а)» порцию не закрывает', async () => {
+    const t = setup();
+    addLearned(t, 1, 1, 12, []);
+    t.plan.status = 'learning_done';
+    t.reviews.push({ id: 7001, portionId: 901, stage: 'rep_1m', dueAt: SECOND, status: 'pending' });
+    await t.tick(SECOND);
+    const id = batchDeliveries(t)[0]!.id;
+    expect(await t.reviewsApp.answer(USER, id, 'missed', SECOND)).toMatchObject({
+      planCompleted: false,
+    });
+    expect(t.portions[0]?.status).toBe('learned');
+  });
+});

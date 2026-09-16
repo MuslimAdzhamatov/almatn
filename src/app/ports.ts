@@ -311,6 +311,11 @@ export interface LearningStore {
    * missed — в статусе sent. Возвращает, сколько повторов изменилось.
    */
   answerReviews(deliveryId: number, answer: 'confirmed' | 'missed', at: Date): Promise<number>;
+  /**
+   * Порции плана с подтверждённым rep_1m → completed; план в learning_done, у которого закрыты
+   * все порции, → completed. true — план закрыт этим вызовом.
+   */
+  completePortions(planId: number, at: Date): Promise<boolean>;
   /** Сводки текста, у которых ещё есть кнопки (sent). */
   openBatchDeliveries(textId: number): Promise<DeliveryRecord[]>;
   unitRows(textId: number, from: number, to: number): Promise<UnitRow[]>;

@@ -410,6 +410,8 @@ export const texts = {
     repeatItem: (ranges: string) => `• повторить ${ranges}`,
     learnItem: (range: string) => `• выучить ${range}`,
     confirmed: (title: string) => `✅ «${title}»: повторение отмечено.`,
+    planCompleted: (title: string) =>
+      `🎉 «${title}»: все повторы пройдены, план завершён! Можно загрузить следующий текст или начать второй круг.`,
     missed: 'Хорошо. Эти повторы останутся в долге — напомню вечером или в следующий слот.',
     nothingToAnswer: 'Здесь уже всё отмечено',
     buttons: {

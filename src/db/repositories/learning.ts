@@ -240,6 +240,26 @@ export function createLearningRepository(db: Db): LearningStore {
       });
     },
 
+    async completePortions(planId, at) {
+      return db.$transaction(async (tx) => {
+        await tx.portion.updateMany({
+          where: {
+            planId,
+            status: 'learned',
+            reviews: { some: { stage: 'rep_1m', status: 'confirmed' } },
+          },
+          data: { status: 'completed', completedAt: at },
+        });
+        const open = await tx.portion.count({ where: { planId, status: { not: 'completed' } } });
+        if (open > 0) return false;
+        const closed = await tx.plan.updateMany({
+          where: { id: planId, status: 'learning_done' },
+          data: { status: 'completed' },
+        });
+        return closed.count === 1;
+      });
+    },
+
     async openBatchDeliveries(textId) {
       const rows = await db.delivery.findMany({
         where: { textId, kind: { in: [...BATCH_KINDS] }, status: 'sent' },

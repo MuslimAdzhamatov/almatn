@@ -182,6 +182,19 @@ export function setup(
       for (const r of changed) r.status = answer;
       return changed.length;
     },
+    completePortions: async () => {
+      for (const p of portions) {
+        const done = reviews.some(
+          (r) => r.portionId === p.id && r.stage === 'rep_1m' && r.status === 'confirmed',
+        );
+        if (p.status === 'learned' && done) p.status = 'completed';
+      }
+      if (plan.status !== 'learning_done' || portions.some((p) => p.status !== 'completed')) {
+        return false;
+      }
+      plan.status = 'completed';
+      return true;
+    },
     openBatchDeliveries: async () =>
       deliveries.filter(
         (d) => (BATCH_KINDS as readonly string[]).includes(d.kind) && d.status === 'sent',
