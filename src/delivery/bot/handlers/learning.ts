@@ -3,6 +3,7 @@ import { parseMask, type Learning, type PortionAction } from '../../../app/learn
 import type { BotContext } from '../context.js';
 import { editOrReply } from '../edit.js';
 import { texts } from '../texts.js';
+import { replyPace } from './pace.js';
 import {
   contextKeyboard,
   learnedMessage,
@@ -27,6 +28,7 @@ async function show(ctx: BotContext, deliveryId: number, action: PortionAction, 
       await ctx.answerCallbackQuery();
       await dropLearnButtons(ctx, deliveryId, action);
       await ctx.reply(learnedMessage(action));
+      await replyPace(ctx, action.pace);
       return;
     case 'already_learned':
       await ctx.answerCallbackQuery({ text: t.alreadyLearned });

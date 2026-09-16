@@ -376,7 +376,9 @@ export interface LearningStore {
   deletePortion(portionId: number): Promise<void>;
   updatePlan(
     planId: number,
-    patch: Partial<Pick<PlanRecord, 'nextLine' | 'estimatedEndDate' | 'status'>>,
+    patch: Partial<
+      Pick<PlanRecord, 'nextLine' | 'estimatedEndDate' | 'status' | 'unitsPerDay' | 'deadlineDate'>
+    >,
   ): Promise<void>;
   countUnits(textId: number, from: number, to: number): Promise<number>;
   setBlocked(userId: bigint, at: Date): Promise<void>;

@@ -422,6 +422,25 @@ export const texts = {
     },
   },
 
+  pace: {
+    shifted: (title: string, endDate: string) =>
+      `📅 «${title}»: из-за задержки заучивание закончится ${endDate}.`,
+    behind: (title: string, perDay: string, endDate: string, deadline: string) =>
+      `📅 «${title}»: с темпом ${perDay} в день заучивание закончится ${endDate} — позже срока ${deadline}. Как поступим?`,
+    catchUpOption: (perDay: string, deadline: string) =>
+      `• «Успеть к сроку» — ${perDay} в день, к ${deadline}.`,
+    shiftOption: (perDay: string, endDate: string) =>
+      `• «Сдвинуть срок» — ${perDay} в день, до ${endDate}.`,
+    adviseShift:
+      '⚠️ Чтобы успеть, норму придётся увеличить больше чем вдвое — советуем сдвинуть срок.',
+    noDaysLeft: 'До срока не осталось рабочих дней — можно только сдвинуть срок.',
+    caughtUp: (title: string, perDay: string, endDate: string) =>
+      `✅ «${title}»: теперь ${perDay} в день, заучивание закончится ${endDate}.`,
+    shiftedChosen: (title: string, endDate: string) =>
+      `✅ «${title}»: срок сдвинут, заучивание закончится ${endDate}.`,
+    buttons: { catchUp: '⏩ Успеть к сроку', shift: '📅 Сдвинуть срок' },
+  },
+
   pause: {
     autoPaused:
       '⏸ План на паузе: 7 дней не было отметок, а повторы копились.\n\nНажмите «Продолжить», когда будете готовы, — сначала придут все накопившиеся повторы.',

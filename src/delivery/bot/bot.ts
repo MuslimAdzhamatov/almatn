@@ -14,6 +14,7 @@ import type { Logger } from '../../lib/logger.js';
 import type { BotContext } from './context.js';
 import { registerLearning } from './handlers/learning.js';
 import { registerOnboarding } from './handlers/onboarding.js';
+import { registerPace } from './handlers/pace.js';
 import { registerPause } from './handlers/pause.js';
 import { registerPlans, type PlansHandlers } from './handlers/plans.js';
 import { registerReviews } from './handlers/reviews.js';
@@ -69,6 +70,7 @@ export function createBot(token: string, deps: BotDeps): Bot<BotContext> {
   registerLearning(bot, deps.learning);
   registerReviews(bot, deps.reviews);
   registerPause(bot, deps.pause);
+  registerPace(bot, deps.learning);
 
   bot.command(['today', 'progress', 'texts', 'pause', 'settings', 'help'], async (ctx) => {
     await ctx.reply(texts.notReadyYet);

@@ -4,6 +4,7 @@ import type { BotContext } from '../context.js';
 import { texts } from '../texts.js';
 import { learnedMessage, nextPortionText } from '../views/learning.js';
 import { batchKeyboard, REVIEW_CALLBACK } from '../views/reviews.js';
+import { replyPace } from './pace.js';
 
 const t = texts.reviews;
 
@@ -27,6 +28,7 @@ async function show(ctx: BotContext, action: BatchAction) {
       await ctx.answerCallbackQuery();
       await redraw(ctx, action.state);
       await ctx.reply(learnedMessage(action.action));
+      await replyPace(ctx, action.action.pace);
       return;
     case 'answered': {
       const { state } = action;
@@ -41,6 +43,7 @@ async function show(ctx: BotContext, action: BatchAction) {
       if (action.planCompleted) lines.push(t.planCompleted(state.title));
       if (action.next) lines.push(nextPortionText(action.next, state.timezone));
       await ctx.reply(lines.join('\n\n'));
+      await replyPace(ctx, action.pace);
       return;
     }
   }

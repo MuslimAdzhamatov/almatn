@@ -449,3 +449,100 @@ describe('автопауза', () => {
     expect(t.portions).toHaveLength(1);
   });
 });
+
+describe('успеть к сроку / сдвинуть срок', () => {
+  // Порция 16.09 выучена только 17.09 в 22:00 МСК — порция 17.09 пропущена.
+  const LATE = at('2026-09-17T19:00:00Z');
+
+  async function lateLearn(t: T) {
+    await t.tick(MAIN);
+    expect(t.plan.estimatedEndDate).toBe('2026-09-19');
+    await t.tick(MAIN_17);
+    const learned = await t.learning.learned(USER, t.lastPortionDelivery().id, LATE);
+    return learned as Extract<typeof learned, { kind: 'learned' }>;
+  }
+
+  it('по количеству в день — новая дата без вопроса', async () => {
+    const t = setup();
+    const learned = await lateLearn(t);
+    expect(learned.next).toEqual({ kind: 'at', at: at('2026-09-18T03:00:00Z') });
+    expect(learned.pace?.check).toEqual({
+      kind: 'shifted',
+      endDate: '2026-09-20',
+      previous: '2026-09-19',
+    });
+    expect(t.plan.estimatedEndDate).toBe('2026-09-20');
+  });
+
+  it('по сроку — выбор; «Успеть к сроку» повышает норму', async () => {
+    const t = setup();
+    Object.assign(t.plan, { paceMode: 'deadline', deadlineDate: '2026-09-19' });
+    const learned = await lateLearn(t);
+    expect(learned.pace).toMatchObject({
+      planId: 1,
+      unitsPerDay: 3,
+      check: {
+        kind: 'behind',
+        deadline: '2026-09-19',
+        shiftEndDate: '2026-09-20',
+        catchUpUnitsPerDay: 5,
+        catchUpEndDate: '2026-09-19',
+        adviseShift: false,
+      },
+    });
+    expect(t.plan.estimatedEndDate).toBe('2026-09-19');
+
+    expect(await t.learning.choosePace(8n, 1, 'catch_up', LATE)).toEqual({ kind: 'stale' });
+    expect(await t.learning.choosePace(USER, 1, 'catch_up', LATE)).toMatchObject({
+      kind: 'caught_up',
+      unitsPerDay: 5,
+      endDate: '2026-09-19',
+    });
+    expect(t.plan).toMatchObject({ unitsPerDay: 5, estimatedEndDate: '2026-09-19' });
+    // Уже успеваем — старые кнопки неактуальны.
+    expect(await t.learning.choosePace(USER, 1, 'shift', LATE)).toEqual({ kind: 'stale' });
+
+    // «Выучил» в 22:00 округлён к 18:00 — утром 18.09 сначала повтор +12 ч, затем порция по новой норме.
+    const MAIN_18 = at('2026-09-18T03:00:00Z');
+    await t.tick(MAIN_18);
+    const batch = batchDeliveries(t).at(-1)!.id;
+    await t.reviewsApp.answer(USER, batch, 'confirmed', minutes(MAIN_18, 5));
+    expect(t.portions.at(-1)).toMatchObject({ lineStart: 4, lineEnd: 8 });
+  });
+
+  it('«Сдвинуть срок» — прежняя норма, новая дата и срок', async () => {
+    const t = setup();
+    Object.assign(t.plan, { paceMode: 'deadline', deadlineDate: '2026-09-19' });
+    await lateLearn(t);
+    expect(await t.learning.choosePace(USER, 1, 'shift', LATE)).toEqual({
+      kind: 'shifted',
+      title: 'Манзума',
+      endDate: '2026-09-20',
+    });
+    expect(t.plan).toMatchObject({
+      unitsPerDay: 3,
+      deadlineDate: '2026-09-20',
+      estimatedEndDate: '2026-09-20',
+    });
+  });
+
+  it('вовремя — ни сообщения, ни вопроса', async () => {
+    const t = setup();
+    await t.tick(MAIN);
+    const learned = await t.learning.learned(USER, t.lastPortionDelivery().id, minutes(MAIN, 30));
+    expect(learned).toMatchObject({ kind: 'learned', pace: null });
+  });
+
+  it('после «Повторил(а)» тоже проверяется темп', async () => {
+    const t = setup();
+    Object.assign(t.plan, { paceMode: 'deadline', deadlineDate: '2026-09-19' });
+    await t.tick(MAIN);
+    await t.learning.learned(USER, t.lastPortionDelivery().id, minutes(MAIN, 30));
+    await t.tick(SECOND);
+    await t.tick(MAIN_17);
+    // Весь долг отмечен только вечером 17.09, после порога — порция 17.09 пропущена.
+    const id = batchDeliveries(t).at(-1)!.id;
+    const done = expectKind(await t.reviewsApp.answer(USER, id, 'confirmed', LATE), 'answered');
+    expect(done.pace?.check.kind).toBe('behind');
+  });
+});

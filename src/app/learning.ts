@@ -17,6 +17,7 @@ import {
   type ScheduledStage,
 } from '../core/srs/slots.js';
 import type { Images, OutgoingPicture } from './images.js';
+import { createPace, type PaceNotice } from './pace.js';
 import {
   BATCH_KINDS,
   type DeliveryRecord,
@@ -67,6 +68,8 @@ export type PortionAction =
       portion: PortionInfo;
       reviews: ScheduledStage[];
       next: NextPortion;
+      /** Долг закрыт, но план отстаёт — сообщение о новой дате или выбор. */
+      pace: PaceNotice | null;
       /** Под сообщением порции остаются кнопки контекста, под напоминанием — ничего. */
       withContext: boolean;
     }
@@ -131,6 +134,12 @@ export function createLearning({
   reportError = () => undefined,
 }: LearningDeps) {
   const L = limits.learning;
+  const pace = createPace(store);
+
+  /** После закрытия долга (порция выдана или ждёт слота) — проверить, успевает ли план. */
+  async function paceAfter(planId: number, next: NextPortion, now: Date) {
+    return next.kind === 'sent' || next.kind === 'at' ? pace.check(planId, now) : null;
+  }
 
   async function debtOf(ctx: PlanContext, now: Date): Promise<boolean> {
     const unlearned = await store.unlearnedPortion(ctx.plan.id);
@@ -183,6 +192,20 @@ export function createLearning({
       now,
     );
 
+  async function setEstimatedEnd(ctx: PlanContext, nextLine: number, now: Date) {
+    const { plan } = ctx;
+    const day = planningDayOf(now, ctx.user);
+    const remaining = await store.countUnits(ctx.text.id, nextLine, plan.lineTo);
+    const endDate = estimateEndDate(
+      day,
+      remaining,
+      plan.unitsPerDay,
+      plan.restDays,
+      plan.startDate,
+    );
+    await store.updatePlan(plan.id, { estimatedEndDate: endDate });
+  }
+
   async function sendPortion(
     ctx: PlanContext,
     portion: Pick<PortionRecord, 'lineStart' | 'lineEnd'>,
@@ -230,7 +253,11 @@ export function createLearning({
     // Порцию уже выдал параллельный вызов (тик и «Выучил» одновременно).
     if (!created) return false;
     try {
-      if (await sendPortion(ctx, created.portion, created.deliveryId, false, now)) return true;
+      if (await sendPortion(ctx, created.portion, created.deliveryId, false, now)) {
+        // План начался: исходная дата окончания — от фактической первой порции.
+        if (seq === 1) await setEstimatedEnd(ctx, units.lineEnd + 1, now);
+        return true;
+      }
     } catch (err) {
       reportError(err, { planId: plan.id, seq });
     }
@@ -453,6 +480,8 @@ export function createLearning({
     },
 
     issueIfDue,
+    paceAfter,
+    choosePace: pace.choose,
 
     async learned(userId: bigint, deliveryId: number, now: Date): Promise<PortionAction> {
       const r = await resolve(userId, deliveryId);
@@ -480,6 +509,7 @@ export function createLearning({
         portion: info,
         reviews,
         next,
+        pace: await paceAfter(r.ctx.plan.id, next, now),
         withContext: r.delivery.kind === 'portion',
       };
     },

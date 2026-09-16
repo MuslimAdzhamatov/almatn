@@ -452,14 +452,14 @@ export function createLearningRepository(db: Db): LearningStore {
       await db.portion.deleteMany({ where: { id: portionId } });
     },
 
-    async updatePlan(planId, { estimatedEndDate, ...patch }) {
+    async updatePlan(planId, { estimatedEndDate, deadlineDate, ...patch }) {
+      const toDb = (date: string | null) => date && isoToDbDate(date);
       await db.plan.update({
         where: { id: planId },
         data: {
           ...patch,
-          ...(estimatedEndDate !== undefined && {
-            estimatedEndDate: estimatedEndDate && isoToDbDate(estimatedEndDate),
-          }),
+          ...(estimatedEndDate !== undefined && { estimatedEndDate: toDb(estimatedEndDate) }),
+          ...(deadlineDate !== undefined && { deadlineDate: toDb(deadlineDate) }),
         },
       });
     },

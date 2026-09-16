@@ -8,6 +8,7 @@ import {
   type SlotEvent,
 } from '../core/scheduler/batch.js';
 import type { Images } from './images.js';
+import type { PaceNotice } from './pace.js';
 import {
   isPaused,
   portionInfo,
@@ -61,6 +62,7 @@ export type BatchAction =
       next: NextPortion | null;
       /** Все порции плана прошли повтор через месяц — план закрыт. */
       planCompleted: boolean;
+      pace: PaceNotice | null;
     }
   | { kind: 'learned'; action: Extract<PortionAction, { kind: 'learned' }>; state: BatchState }
   /** Отвечать уже не на что: повторы отмечены раньше или порция уже выучена. */
@@ -244,13 +246,14 @@ export function createReviews({
       const state = await stateOf(r.ctx, r.delivery);
       if (changed === 0) return { kind: 'unchanged', state, portion: null };
       if (answer === 'missed') {
-        return { kind: 'answered', answer, state, next: null, planCompleted: false };
+        return { kind: 'answered', answer, state, next: null, planCompleted: false, pace: null };
       }
       // После повтора через месяц порция закрыта; закрыты все — закрыт и план.
       const planCompleted = await store.completePortions(r.ctx.plan.id, now);
       const issued = planCompleted ? null : await learning.issueIfDue(r.ctx.plan.id, now);
       const next = issued?.kind === 'done' ? null : issued;
-      return { kind: 'answered', answer, state, next, planCompleted };
+      const pace = next && (await learning.paceAfter(r.ctx.plan.id, next, now));
+      return { kind: 'answered', answer, state, next, planCompleted, pace };
     },
 
     /** «Выучил …» под напоминанием о долге — тот же сценарий, что под порцией. */

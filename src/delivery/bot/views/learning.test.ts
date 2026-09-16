@@ -92,6 +92,7 @@ describe('сообщения порции', () => {
         { stage: 'rep_1d', dueAt: new Date('2026-09-17T03:00:00Z') },
       ],
       next: { kind: 'at', at: new Date('2026-09-17T03:00:00Z') },
+      pace: null,
     };
     const text = learnedMessage(action, NOW);
     expect(text).toContain('• через 12 часов — сегодня в 18:00');
