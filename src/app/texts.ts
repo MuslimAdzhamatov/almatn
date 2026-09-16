@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { basename, extname } from 'node:path';
 import { BYTES_IN_MB, limits } from '../config/limits.js';
-import { groupIntoSegments, segmentPixelRect } from '../core/pdf/crop.js';
-import type { LineBox } from '../core/pdf/layout.js';
 import { PdfToolError } from '../core/pdf/poppler.js';
+import { createImages, type LineImage } from './images.js';
 import { AUTO, parseImagePages, parsePdf } from './parsing.js';
 import type {
   DialogStore,
@@ -74,12 +73,7 @@ export interface TextSummary {
   report: ParseReport;
 }
 
-export interface LineImage {
-  page: number;
-  lineStart: number;
-  lineEnd: number;
-  png: Buffer;
-}
+export type { LineImage } from './images.js';
 
 export type TextAction =
   | { kind: 'ask_title'; textId: number; defaultTitle: string }
@@ -190,6 +184,7 @@ export function createTexts({
   newToken = () => randomBytes(4).toString('hex'),
 }: TextsDeps) {
   const queue = createSerialQueue();
+  const images = createImages({ files, tools });
   const listeners: ((event: ParseEvent) => Promise<void> | void)[] = [];
 
   async function emit(event: ParseEvent) {
@@ -276,38 +271,6 @@ export function createTexts({
       unitName: text.unitName,
       strategy: text.parseStrategy ?? 'manual_page',
     };
-  }
-
-  /** Картинки строк: подряд идущие строки одной страницы — одна картинка. */
-  async function renderLineImages(
-    text: TextRecord,
-    boxes: readonly LineBox[],
-  ): Promise<LineImage[]> {
-    const dpi = limits.pdf.cropDpi;
-    // Для текста из картинок координаты хранятся в пикселях страницы, поэтому масштаб равен 1.
-    const imagePages = text.sourceKind === 'images' ? await files.listImagePages(text.id) : null;
-    const outDir = imagePages ? '' : await files.pagesDir(text.id);
-    const images: LineImage[] = [];
-    for (const segment of groupIntoSegments(boxes)) {
-      const path =
-        imagePages?.[segment.page - 1] ??
-        (imagePages
-          ? null
-          : await tools.renderPage(text.filePath, { outDir, dpi, page: segment.page }));
-      if (!path) continue;
-      const size = await tools.imageSize(path);
-      const page = imagePages
-        ? { widthPt: size.width, heightPt: size.height }
-        : { widthPt: (size.width * 72) / dpi, heightPt: (size.height * 72) / dpi };
-      const rect = segmentPixelRect(segment, page, size);
-      images.push({
-        page: segment.page,
-        lineStart: segment.lineStart,
-        lineEnd: segment.lineEnd,
-        png: await tools.crop(path, rect),
-      });
-    }
-    return images;
   }
 
   return {
@@ -542,7 +505,7 @@ export function createTexts({
       const text = await store.get(textId);
       if (!text) return [];
       const count = text.parseStrategy === 'manual_page' ? 1 : limits.pdf.previewLines;
-      return renderLineImages(text, await store.firstLines(textId, count));
+      return images.render(text, await store.firstLines(textId, count));
     },
 
     async confirm(userId: bigint, textId: number): Promise<TextAction> {

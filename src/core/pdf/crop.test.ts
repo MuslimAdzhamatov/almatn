@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { groupIntoSegments, segmentPixelRect } from './crop.js';
+import {
+  groupIntoSegments,
+  segmentCacheKey,
+  segmentPixelRect,
+  typicalLineHeight,
+  withMargin,
+} from './crop.js';
 import type { LineBox } from './layout.js';
 import { pagesAsUnits } from './manual.js';
 
@@ -88,5 +94,33 @@ describe('segmentPixelRect', () => {
       width: 827,
       height: 1170,
     });
+  });
+});
+
+describe('запас вырезки', () => {
+  const box = (lineNumber: number, yTop: number, yBottom: number): LineBox => ({
+    lineNumber,
+    printedNumber: null,
+    page: 1,
+    sectionBreakBefore: false,
+    fragments: [{ kind: 'text', page: 1, yTop, yBottom, xLeft: null, xRight: null }],
+  });
+
+  it('высота строки — медиана текстовых фрагментов', () => {
+    expect(typicalLineHeight([box(1, 0, 20), box(2, 20, 30), box(3, 30, 60)])).toBe(20);
+    expect(typicalLineHeight([])).toBe(0);
+  });
+
+  it('каждый шаг добавляет 40% высоты строки сверху и снизу, не выше края', () => {
+    const [segment] = groupIntoSegments([box(1, 10, 30)]);
+    expect(withMargin([segment!], 2, 20)).toEqual([{ ...segment, yTop: 0, yBottom: 46 }]);
+    expect(withMargin([segment!], 0, 20)).toEqual([segment]);
+  });
+
+  it('ключ кэша различает границы', () => {
+    const [a] = groupIntoSegments([box(1, 10, 30)]);
+    const [b] = withMargin([a!], 1, 20);
+    expect(segmentCacheKey(a!, 200)).toBe('1:10.0:30.0:::200');
+    expect(segmentCacheKey(b!, 200)).not.toBe(segmentCacheKey(a!, 200));
   });
 });

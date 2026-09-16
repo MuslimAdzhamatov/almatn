@@ -170,6 +170,240 @@ export interface PlansStore {
   scheduledReviews(userId: bigint, exceptTextId: number): Promise<ScheduledReview[]>;
 }
 
+// ——— Выдача порций и повторы (этап 5) ———
+
+/** Кэш Telegram file_id для одинаковых вырезок. */
+export interface CropCacheStore {
+  get(textId: number, keys: readonly string[]): Promise<Map<string, string>>;
+  save(textId: number, entries: readonly { cacheKey: string; fileId: string }[]): Promise<void>;
+}
+
+export type ReviewStageName =
+  'learn_reminder' | 'rep_12h' | 'rep_1d' | 'rep_3d' | 'rep_2w' | 'rep_1m';
+export type ReviewStatusName = 'pending' | 'sent' | 'confirmed' | 'missed' | 'cancelled';
+export type PortionStatusName = 'sent' | 'learned' | 'completed';
+export type DeliveryKindName =
+  'portion' | 'review_batch' | 'debt_reminder' | 'learn_reminder' | 'pause_ending' | 'autopause';
+export type DeliveryStatusName =
+  'sending' | 'sent' | 'confirmed' | 'missed' | 'failed' | 'replaced';
+
+/** Настройки пользователя, нужные планировщику. */
+export interface LearnerSettings {
+  userId: bigint;
+  timezone: string;
+  dailySendTime: string;
+  eveningReminderTime: string;
+  nightStart: string;
+  nightEnd: string;
+  nightPolicy: NightPolicy;
+  learnReminderDelayMin: number;
+  pausedFrom: Date | null;
+  pausedUntil: Date | null;
+  blockedAt: Date | null;
+}
+
+/** Текст плана — то, что нужно для подписей и картинок. */
+export interface PlanText {
+  id: number;
+  title: string;
+  unitName: UnitName;
+  parseStrategy: ParseStrategy;
+  sourceKind: SourceKind;
+  filePath: string;
+  totalLines: number;
+}
+
+export interface PlanContext {
+  plan: PlanRecord;
+  text: PlanText;
+  user: LearnerSettings;
+}
+
+export interface PortionRecord {
+  id: number;
+  planId: number;
+  seq: number;
+  lineStart: number;
+  lineEnd: number;
+  status: PortionStatusName;
+  sentAt: Date;
+  learnedAt: Date | null;
+  anchorAt: Date | null;
+}
+
+export interface DeliveryRecord {
+  id: number;
+  userId: bigint;
+  textId: number | null;
+  portionId: number | null;
+  kind: DeliveryKindName;
+  status: DeliveryStatusName;
+  slotAt: Date;
+  messageIds: number[];
+  buttonsMessageId: number | null;
+  cropMarginSteps: number;
+  extraBefore: number;
+  extraAfter: number;
+}
+
+export interface UnitRow {
+  lineNumber: number;
+  skipped: boolean;
+}
+
+/** Единица с координатами и признаком пропуска. */
+export type UnitBox = LineBox & { skipped: boolean };
+
+export interface NewPortion {
+  planId: number;
+  seq: number;
+  lineStart: number;
+  lineEnd: number;
+  sentAt: Date;
+  /** Ожидаемый Plan.nextLine: если план успели изменить, порция не создаётся. */
+  expectedNextLine: number;
+  nextLine: number;
+  learnReminderAt: Date;
+  delivery: { userId: bigint; textId: number; slotAt: Date; dedupeKey: string };
+}
+
+export interface DueLearnReminder {
+  reviewId: number;
+  dueAt: Date;
+  portion: PortionRecord;
+  context: PlanContext;
+}
+
+export interface LearningStore {
+  /** Выполняет fn под advisory lock; null — блокировку держит другой тик. */
+  withTickLock<T>(fn: () => Promise<T>): Promise<T | null>;
+  listActivePlans(): Promise<PlanContext[]>;
+  planContext(planId: number): Promise<PlanContext | null>;
+  lastPortion(planId: number): Promise<PortionRecord | null>;
+  getPortion(portionId: number): Promise<PortionRecord | null>;
+  /** Невыученная порция плана (статус sent), если есть. */
+  unlearnedPortion(planId: number): Promise<PortionRecord | null>;
+  /** Повторы (без learn_reminder) всех порций текста. */
+  textReviews(textId: number): Promise<{ dueAt: Date; status: ReviewStatusName }[]>;
+  unitRows(textId: number, from: number, to: number): Promise<UnitRow[]>;
+  unitBoxes(textId: number, from: number, to: number): Promise<UnitBox[]>;
+  /** Порция + learn_reminder + запись об отправке + сдвиг nextLine одной транзакцией; null — гонка. */
+  createPortion(
+    portion: NewPortion,
+  ): Promise<{ portion: PortionRecord; deliveryId: number } | null>;
+  /** Отправка не удалась: порция удаляется, nextLine возвращается. */
+  rollbackPortion(portionId: number, nextLine: number): Promise<void>;
+  /** Новая запись об отправке; null — такой dedupeKey уже есть. */
+  createDelivery(delivery: {
+    userId: bigint;
+    textId: number | null;
+    portionId: number | null;
+    kind: DeliveryKindName;
+    slotAt: Date;
+    dedupeKey: string;
+  }): Promise<number | null>;
+  markDeliverySent(
+    deliveryId: number,
+    messageIds: number[],
+    buttonsMessageId: number | null,
+    at: Date,
+  ): Promise<void>;
+  setDeliveryStatus(deliveryId: number, status: DeliveryStatusName, at?: Date): Promise<void>;
+  deleteDelivery(deliveryId: number): Promise<void>;
+  getDelivery(deliveryId: number): Promise<DeliveryRecord | null>;
+  /** Поля кнопок контекста. */
+  updateDeliveryContext(
+    deliveryId: number,
+    patch: Partial<Pick<DeliveryRecord, 'cropMarginSteps' | 'extraBefore' | 'extraAfter'>>,
+  ): Promise<void>;
+  /** Отправки порции, у которых ещё есть кнопки (sent). */
+  openPortionDeliveries(portionId: number): Promise<DeliveryRecord[]>;
+  countPortionDeliveries(portionId: number): Promise<number>;
+  /**
+   * «Выучил»: sent → learned, learn_reminder отменяется, создаются повторы. false — порция уже не sent.
+   */
+  markLearned(
+    portionId: number,
+    learnedAt: Date,
+    anchorAt: Date,
+    reviews: readonly { stage: ReviewStageName; dueAt: Date }[],
+  ): Promise<boolean>;
+  cancelLearnReminder(portionId: number): Promise<void>;
+  /** «Напомнить позже»: learn_reminder снова pending с новым сроком. */
+  rescheduleLearnReminder(portionId: number, dueAt: Date): Promise<void>;
+  dueLearnReminders(now: Date): Promise<DueLearnReminder[]>;
+  /** pending → sent; false — напоминание уже взято. */
+  claimLearnReminder(reviewId: number): Promise<boolean>;
+  releaseLearnReminder(reviewId: number): Promise<void>;
+  markSkipped(textId: number, lineNumbers: readonly number[]): Promise<void>;
+  /** Новые границы порции после пропуска. */
+  updatePortionRange(portionId: number, lineStart: number, lineEnd: number): Promise<void>;
+  deletePortion(portionId: number): Promise<void>;
+  updatePlan(
+    planId: number,
+    patch: Partial<Pick<PlanRecord, 'nextLine' | 'estimatedEndDate' | 'status'>>,
+  ): Promise<void>;
+  countUnits(textId: number, from: number, to: number): Promise<number>;
+  setBlocked(userId: bigint, at: Date): Promise<void>;
+}
+
+/** Картинка к отправке — уже известный Telegram file_id или PNG; подпись — по номерам единиц. */
+export interface NotifierPicture {
+  fileId: string | null;
+  png: Buffer | null;
+  lineStart: number;
+  lineEnd: number;
+}
+
+/** Как называть единицы в подписях. */
+export interface UnitLabel {
+  unitName: UnitName;
+  strategy: ParseStrategy;
+}
+
+export type SendResult =
+  | {
+      ok: true;
+      messageIds: number[];
+      buttonsMessageId: number | null;
+      /** file_id отправленных картинок по порядку (null — не удалось узнать). */
+      fileIds: (string | null)[];
+    }
+  | { ok: false; reason: 'blocked' | 'error'; error: unknown };
+
+export interface PortionView extends UnitLabel {
+  deliveryId: number;
+  title: string;
+  lineStart: number;
+  lineEnd: number;
+  /** Сколько единиц порции (без пропущенных). */
+  count: number;
+  /** Порция пришла взамен пропущенной. */
+  replaced: boolean;
+}
+
+/**
+ * Отправка сообщений пользователю. Сценарии и планировщик не знают про Telegram —
+ * реализация в delivery/bot/notifier.ts.
+ */
+export interface Notifier {
+  sendPortion(
+    userId: bigint,
+    view: PortionView,
+    pictures: readonly NotifierPicture[],
+  ): Promise<SendResult>;
+  sendLearnReminder(userId: bigint, view: PortionView): Promise<SendResult>;
+  /** Дополнительные картинки (кнопки контекста). */
+  sendPictures(
+    userId: bigint,
+    unit: UnitLabel,
+    pictures: readonly NotifierPicture[],
+  ): Promise<SendResult>;
+  sendText(userId: bigint, text: string): Promise<SendResult>;
+  /** Убрать кнопки под сообщением (порция заменена, план закончился). */
+  clearButtons(userId: bigint, messageId: number): Promise<void>;
+}
+
 // ——— Присланные файлы, которые ещё не стали текстом ———
 
 /**

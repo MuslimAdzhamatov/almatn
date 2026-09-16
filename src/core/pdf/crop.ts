@@ -76,3 +76,43 @@ export function segmentPixelRect(
   const bottom = clamp(Math.ceil(segment.yBottom * sy), top + 1, image.height);
   return { left, top, width: right - left, height: bottom - top };
 }
+
+/** «Захватить больше»: каждое нажатие добавляет сверху и снизу 40% высоты строки. */
+export const CONTEXT_MARGIN_SHARE = 0.4;
+
+/** Обычная высота строки порции — медиана высот текстовых фрагментов. */
+export function typicalLineHeight(boxes: readonly LineBox[]): number {
+  const heights = boxes
+    .flatMap((box) => box.fragments)
+    .filter((fragment) => fragment.kind === 'text')
+    .map((fragment) => fragment.yBottom - fragment.yTop)
+    .sort((a, b) => a - b);
+  return heights[Math.floor(heights.length / 2)] ?? 0;
+}
+
+/** Вырезки с вертикальным запасом; за край страницы не выходят (см. segmentPixelRect). */
+export function withMargin(
+  segments: readonly CropSegment[],
+  steps: number,
+  lineHeight: number,
+): CropSegment[] {
+  const margin = steps * CONTEXT_MARGIN_SHARE * lineHeight;
+  return segments.map((segment) => ({
+    ...segment,
+    yTop: Math.max(0, segment.yTop - margin),
+    yBottom: segment.yBottom + margin,
+  }));
+}
+
+/** Ключ кэша Telegram file_id: одинаковая вырезка той же страницы — та же картинка. */
+export function segmentCacheKey(segment: CropSegment, dpi: number): string {
+  const r = (value: number | null) => (value === null ? '' : value.toFixed(1));
+  return [
+    segment.page,
+    r(segment.yTop),
+    r(segment.yBottom),
+    r(segment.xLeft),
+    r(segment.xRight),
+    dpi,
+  ].join(':');
+}
