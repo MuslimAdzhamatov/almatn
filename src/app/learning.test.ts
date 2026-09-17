@@ -260,12 +260,30 @@ describe('пропуск единиц', () => {
     expect(skipped.portion).toMatchObject({ lineStart: 2, lineEnd: 4 });
     expect(t.portions).toMatchObject([{ seq: 1, lineStart: 2, lineEnd: 4 }]);
     expect(t.plan).toMatchObject({ nextLine: 5, estimatedEndDate: '2026-09-19' });
-    // Старая отправка неактуальна, её кнопки убраны; новая пришла с пометкой замены.
+    // Старая отправка неактуальна, её сообщения удалены; новая пришла с пометкой замены.
     expect(t.deliveries.find((d) => d.id === first.id)?.status).toBe('replaced');
-    expect(t.cleared).toEqual([first.buttonsMessageId]);
+    expect(t.deleted).toEqual(first.messageIds);
+    expect(t.cleared).toEqual([]);
     expect(t.sent.at(-1)).toMatchObject({ kind: 'portion', view: { replaced: true, count: 3 } });
     expectKind(await t.learning.learned(USER, first.id, MAIN), 'stale');
     expectKind(await t.learning.learned(USER, t.lastPortionDelivery().id, MAIN), 'learned');
+  });
+
+  it('удаляются и порция, и напоминание о ней; старше 47 часов — только кнопки', async () => {
+    const t = setup();
+    await t.tick(MAIN);
+    await t.tick(minutes(MAIN, 120));
+    const [portion, reminder] = t.deliveries;
+    expect(reminder?.kind).toBe('learn_reminder');
+    await t.learning.skip(USER, portion!.id, 1n, minutes(MAIN, 130));
+    expect(t.deleted).toEqual([...portion!.messageIds, ...reminder!.messageIds]);
+
+    const late = setup();
+    await late.tick(MAIN);
+    const old = late.lastPortionDelivery();
+    await late.learning.skip(USER, old.id, 1n, minutes(MAIN, 47 * 60));
+    expect(late.deleted).toEqual([]);
+    expect(late.cleared).toEqual([old.buttonsMessageId]);
   });
 
   it('пропуск из середины: пропущенная единица не показывается', async () => {

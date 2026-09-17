@@ -95,6 +95,15 @@ export function createNotifier(api: () => Api): Notifier {
         };
       }),
 
+    async deleteMessages(userId, messageIds) {
+      if (messageIds.length === 0) return true;
+      try {
+        return await api().deleteMessages(Number(userId), [...messageIds]);
+      } catch {
+        return false;
+      }
+    },
+
     async clearButtons(userId, messageId) {
       await api().editMessageReplyMarkup(Number(userId), messageId, { reply_markup: undefined });
     },

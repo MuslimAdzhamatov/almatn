@@ -500,6 +500,8 @@ export interface Notifier {
   sendNotice(userId: bigint, notice: Notice): Promise<SendResult>;
   /** Убрать кнопки под сообщением (порция заменена, план закончился). */
   clearButtons(userId: bigint, messageId: number): Promise<void>;
+  /** Удалить сообщения бота (Telegram разрешает только моложе 48 часов); false — не получилось. */
+  deleteMessages(userId: bigint, messageIds: readonly number[]): Promise<boolean>;
 }
 
 // ——— Настройки (этап 7) ———

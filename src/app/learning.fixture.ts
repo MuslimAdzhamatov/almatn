@@ -374,6 +374,7 @@ export function setup(
     lines?: [number, number][];
   }[] = [];
   const cleared: number[] = [];
+  const deleted: number[] = [];
   let failNext: SendResult | null = null;
   let messageId = 1000;
   const result = (count: number): SendResult => {
@@ -420,6 +421,10 @@ export function setup(
       return r;
     },
     clearButtons: async (_u, mid) => void cleared.push(mid),
+    deleteMessages: async (_u, ids) => {
+      deleted.push(...ids);
+      return true;
+    },
   };
 
   const margins: number[] = [];
@@ -495,6 +500,7 @@ export function setup(
     deliveries,
     sent,
     cleared,
+    deleted,
     margins,
     remembered,
     errors,

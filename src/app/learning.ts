@@ -37,6 +37,8 @@ import { boxesIn, deliveryUnits } from './units.js';
 // тик планировщика, «Выучил» / «Ещё учу» / «Напомнить позже», пропуск единиц и кнопки контекста.
 
 const MINUTE = 60 * 1000;
+/** Telegram удаляет сообщения бота не старше 48 часов — берём с запасом. */
+const DELETE_WINDOW_MS = 47 * 60 * MINUTE;
 
 export interface LearningDeps {
   store: LearningStore;
@@ -397,10 +399,12 @@ export function createLearning({
     const { plan } = ctx;
     await store.markSkipped(ctx.text.id, numbers);
 
-    // Кнопки прежних отправок порции больше не действуют.
+    // Прежняя порция и напоминание о ней удаляются из чата; слишком старые — только без кнопок.
     for (const old of await store.openPortionDeliveries(portion.id)) {
       await store.setDeliveryStatus(old.id, 'replaced', now);
-      if (old.buttonsMessageId !== null) {
+      const fresh = now.getTime() - old.slotAt.getTime() < DELETE_WINDOW_MS;
+      const deleted = fresh && (await notifier.deleteMessages(ctx.user.userId, old.messageIds));
+      if (!deleted && old.buttonsMessageId !== null) {
         await notifier.clearButtons(ctx.user.userId, old.buttonsMessageId).catch(() => undefined);
       }
     }

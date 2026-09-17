@@ -65,8 +65,9 @@ async function show(ctx: BotContext, deliveryId: number, action: PortionAction, 
     }
     case 'skipped':
       await ctx.answerCallbackQuery();
-      if (fromMenu) await editOrReply(ctx, skippedMessage(action));
-      else await ctx.reply(skippedMessage(action));
+      // Меню выбора больше не нужно — в чате остаётся только новая порция и итог.
+      if (fromMenu) await ctx.deleteMessage().catch(() => undefined);
+      await ctx.reply(skippedMessage(action));
       return;
     case 'failed':
       await ctx.answerCallbackQuery({ text: t.failed });
