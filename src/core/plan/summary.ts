@@ -1,6 +1,13 @@
 import { buildPortionCalendar, normalizeRestDays } from './calendar.js';
-import { addDays, type IsoDate } from './dates.js';
-import { forecastLoad, LAST_REVIEW_OFFSET_DAYS, reviewEvents, type LoadForecast } from './load.js';
+import { addDays, maxDate, type IsoDate } from './dates.js';
+import { knownCalendar, type KnownRange } from './known.js';
+import {
+  forecastLoad,
+  KNOWN_REVIEW_OFFSET_DAYS,
+  LAST_REVIEW_OFFSET_DAYS,
+  reviewEvents,
+  type LoadForecast,
+} from './load.js';
 import { computePace, type PaceError, type PaceInput, type PaceResult } from './pace.js';
 
 // Сводка плана для подтверждения (CLAUDE.md, раздел 5.3): норма, даты, нагрузка, предупреждение о перегрузке.
@@ -18,13 +25,17 @@ export interface PlanDraft {
   startDate: IsoDate;
   restDays: readonly number[];
   pace: PaceInput;
+  /** Единицы, которые пользователь знал до плана: не выдаются, но повторяются. */
+  known?: KnownRange | null;
 }
 
 export interface PlanSummary extends Omit<PaceResult, 'ok'> {
   ok: true;
   totalUnits: number;
+  /** Сколько единиц идёт только на повторение («Уже знаю»). */
+  knownUnits: number;
   restDays: number[];
-  /** Дата последних повторов: последняя порция + 30 дней. */
+  /** Дата последних повторов: последняя порция (или известная единица) + 30 дней. */
   lastReviewDate: IsoDate;
   load: LoadForecast;
   overload: { unitsPerDay: boolean; peak: boolean };
@@ -49,12 +60,20 @@ export function summarizePlan(
     startDate: draft.startDate,
     restDays,
   });
-  const load = forecastLoad(reviewEvents(calendar), pace.firstDate, pace.endDate);
+  // Известные единицы идут тем же темпом рядом с новыми и добавляют повторов.
+  const known = knownCalendar(draft.known ?? null, pace.unitsPerDay, draft.startDate, restDays);
+  const events = [
+    ...reviewEvents(calendar),
+    ...reviewEvents(known, KNOWN_REVIEW_OFFSET_DAYS),
+  ];
+  const lastDate = maxDate(pace.endDate, known.at(-1)?.date ?? pace.endDate);
+  const load = forecastLoad(events, pace.firstDate, lastDate);
   return {
     ...pace,
     totalUnits,
+    knownUnits: known.reduce((sum, portion) => sum + portion.to - portion.from + 1, 0),
     restDays,
-    lastReviewDate: addDays(pace.endDate, LAST_REVIEW_OFFSET_DAYS),
+    lastReviewDate: addDays(lastDate, LAST_REVIEW_OFFSET_DAYS),
     load,
     overload: {
       unitsPerDay: pace.unitsPerDay > thresholds.maxUnitsPerDay,

@@ -7,6 +7,9 @@ import { addDays, diffDays, type IsoDate } from './dates.js';
 
 export const REVIEW_OFFSET_DAYS = [0, 1, 3, 14, 30] as const;
 
+/** Уже известные единицы повторяются без +12 ч — первый повтор на следующий день. */
+export const KNOWN_REVIEW_OFFSET_DAYS: readonly number[] = [1, 3, 14, 30];
+
 /** Через сколько дней после последней порции приходят последние повторы (+1 месяц). */
 export const LAST_REVIEW_OFFSET_DAYS: number = REVIEW_OFFSET_DAYS[4];
 
@@ -16,9 +19,12 @@ export interface LoadEvent {
 }
 
 /** Повторы, которые породит календарь порций: по событию на каждый этап каждой порции. */
-export function reviewEvents(calendar: readonly CalendarPortion[]): LoadEvent[] {
+export function reviewEvents(
+  calendar: readonly CalendarPortion[],
+  offsets: readonly number[] = REVIEW_OFFSET_DAYS,
+): LoadEvent[] {
   return calendar.flatMap((portion) =>
-    REVIEW_OFFSET_DAYS.map((offset) => ({
+    offsets.map((offset) => ({
       date: addDays(portion.date, offset),
       units: portion.to - portion.from + 1,
     })),

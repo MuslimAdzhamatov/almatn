@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyQuietHours,
+  KNOWN_REVIEW_STAGES,
   mainSlotOn,
   nearestSlot,
   nextSlot,
@@ -57,6 +58,17 @@ describe('цепочка повторов', () => {
     const chain = reviewChain(anchor, at('2026-09-16T05:00:00Z'), MSK);
     expect(chain.map((c) => [c.stage, iso(c.dueAt)])).toEqual([
       ['rep_12h', '2026-09-16T15:00:00.000Z'],
+      ['rep_1d', '2026-09-17T03:00:00.000Z'],
+      ['rep_3d', '2026-09-19T03:00:00.000Z'],
+      ['rep_2w', '2026-09-30T03:00:00.000Z'],
+      ['rep_1m', '2026-10-16T03:00:00.000Z'],
+    ]);
+  });
+
+  it('уже известные единицы идут без +12 ч', () => {
+    const now = at('2026-09-16T05:00:00Z');
+    const chain = reviewChain(nearestSlot(now, MSK), now, MSK, KNOWN_REVIEW_STAGES);
+    expect(chain.map((c) => [c.stage, iso(c.dueAt)])).toEqual([
       ['rep_1d', '2026-09-17T03:00:00.000Z'],
       ['rep_3d', '2026-09-19T03:00:00.000Z'],
       ['rep_2w', '2026-09-30T03:00:00.000Z'],

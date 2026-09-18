@@ -80,6 +80,57 @@ describe('сводка плана', () => {
     expect(summary.overload).toEqual({ unitsPerDay: false, peak: false });
   });
 
+  it('уже известные единицы добавляют повторов, но не считаются заучиванием', () => {
+    const without = summarizePlan(
+      {
+        lineFrom: 101,
+        lineTo: 200,
+        startDate: WED,
+        restDays: [],
+        pace: { mode: 'per_day', unitsPerDay: 5 },
+      },
+      thresholds,
+    );
+    const withKnown = summarizePlan(
+      {
+        lineFrom: 101,
+        lineTo: 200,
+        startDate: WED,
+        restDays: [],
+        pace: { mode: 'per_day', unitsPerDay: 5 },
+        known: { lineFrom: 1, lineTo: 100 },
+      },
+      thresholds,
+    );
+    expect(without.ok && withKnown.ok).toBe(true);
+    if (!without.ok || !withKnown.ok) return;
+    // Учить всё те же 100 единиц и столько же дней — известные идут только на повтор.
+    expect(withKnown).toMatchObject({ totalUnits: 100, knownUnits: 100, portions: 20 });
+    expect(withKnown.endDate).toBe(without.endDate);
+    expect(without.knownUnits).toBe(0);
+    // Известное повторяется рядом с новым: нагрузка примерно вдвое выше.
+    expect(withKnown.load.peak).toBeGreaterThan(without.load.peak);
+    expect(withKnown.load.typicalHigh).toBeGreaterThan(without.load.typicalHigh);
+  });
+
+  it('известного больше, чем нового: последние повторы считаются от него', () => {
+    const summary = summarizePlan(
+      {
+        lineFrom: 41,
+        lineTo: 50,
+        startDate: WED,
+        restDays: [],
+        pace: { mode: 'per_day', unitsPerDay: 5 },
+        known: { lineFrom: 1, lineTo: 40 },
+      },
+      thresholds,
+    );
+    expect(summary.ok).toBe(true);
+    if (!summary.ok) return;
+    // Заучивание кончится за 2 дня, известное разложено на 8 — повторы тянутся от него.
+    expect(summary.lastReviewDate).toBe(addDays(summary.endDate, 30 + 6));
+  });
+
   it('перегрузка: много новых в день и большой пик', () => {
     const summary = summarizePlan(
       {

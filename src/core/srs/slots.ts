@@ -82,6 +82,12 @@ export function nearestSlot(at: Date, s: SlotSettings): Slot {
 export const REVIEW_STAGES = ['rep_12h', 'rep_1d', 'rep_3d', 'rep_2w', 'rep_1m'] as const;
 export type RepStage = (typeof REVIEW_STAGES)[number];
 
+/**
+ * Цепочка для единиц, которые пользователь уже знал до плана (CLAUDE.md, раздел 5.3):
+ * без +12 ч — он нужен свежевыученному, а известное повторяется начиная со следующих суток.
+ */
+export const KNOWN_REVIEW_STAGES: readonly RepStage[] = ['rep_1d', 'rep_3d', 'rep_2w', 'rep_1m'];
+
 const STAGE_DAYS: Record<Exclude<RepStage, 'rep_12h'>, number> = {
   rep_1d: 1,
   rep_3d: 3,
@@ -97,16 +103,24 @@ export interface ScheduledStage {
 /**
  * Цепочка повторов от anchorAt: +12 ч — противоположный слот, остальные — тот же слот через N суток.
  * Если слот +12 ч уже прошёл к моменту now, повтор получает ближайший будущий слот.
+ * `stages` сужает набор этапов (известные единицы идут без +12 ч).
  */
-export function reviewChain(anchor: Slot, now: Date, s: SlotSettings): ScheduledStage[] {
-  const half =
-    anchor.kind === 'main'
-      ? slotOn(anchor.day, 'second', s)
-      : slotOn(addDays(anchor.day, 1), 'main', s);
-  const chain: ScheduledStage[] = [
-    { stage: 'rep_12h', dueAt: half.at > now ? half.at : nextSlot(now, s).at },
-  ];
+export function reviewChain(
+  anchor: Slot,
+  now: Date,
+  s: SlotSettings,
+  stages: readonly RepStage[] = REVIEW_STAGES,
+): ScheduledStage[] {
+  const chain: ScheduledStage[] = [];
+  if (stages.includes('rep_12h')) {
+    const half =
+      anchor.kind === 'main'
+        ? slotOn(anchor.day, 'second', s)
+        : slotOn(addDays(anchor.day, 1), 'main', s);
+    chain.push({ stage: 'rep_12h', dueAt: half.at > now ? half.at : nextSlot(now, s).at });
+  }
   for (const [stage, days] of Object.entries(STAGE_DAYS) as [RepStage, number][]) {
+    if (!stages.includes(stage)) continue;
     chain.push({ stage, dueAt: slotOn(addDays(anchor.day, days), anchor.kind, s).at });
   }
   return chain;
