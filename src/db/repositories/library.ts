@@ -34,7 +34,14 @@ export function createLibraryRepository(db: Db): LibraryStore {
       return db.portion.findMany({
         where: { planId },
         orderBy: { seq: 'asc' },
-        select: { lineStart: true, lineEnd: true, status: true, sentAt: true, learnedAt: true },
+        select: {
+          lineStart: true,
+          lineEnd: true,
+          kind: true,
+          status: true,
+          sentAt: true,
+          learnedAt: true,
+        },
       });
     },
 

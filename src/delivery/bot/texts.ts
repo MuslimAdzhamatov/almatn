@@ -258,6 +258,14 @@ export const texts = {
         `Напишите диапазон, например 1-100 (всего ${total}). Одно число — с него до конца.`,
       ].join('\n'),
     pace: (total: string) => `К заучиванию: ${total}.\n\nКак задать темп?`,
+    knownInput: (unitLabel: string, from: number, max: number, invalid: boolean) =>
+      [
+        ...(invalid ? [`Нужно целое число от ${from} до ${max}.`, ''] : []),
+        `До какого номера вы уже знаете текст? Напишите число от ${from} до ${max}.`,
+        '',
+        `Эти ${unitLabel} не будут приходить новыми порциями, но войдут в повторение — ` +
+          'тем же темпом, что и заучивание.',
+      ].join('\n'),
     deadlineKind: 'За какой срок выучить?',
     deadlineDays: (maxDays: number) =>
       `Сколько дней на заучивание? Выберите или напишите число (до ${maxDays}).`,
@@ -297,6 +305,8 @@ export const texts = {
 
     confirmTitle: (title: string, range: string, total: string) =>
       `План: «${title}», ${range} (${total}).`,
+    known: (range: string, total: string) =>
+      `Уже знаете: ${range} (${total}) — новыми порциями не придут, только на повторение.`,
     pacePerDay: (perDay: string) => `Темп: ${perDay} в день.`,
     paceDeadline: (perDay: string, deadline: string) =>
       `Темп: ${perDay} в день, чтобы выучить к ${deadline}.`,
@@ -332,6 +342,7 @@ export const texts = {
     buttons: {
       all: (total: string) => `Весь текст (${total})`,
       range: 'Выбрать диапазон…',
+      known: '📖 Часть уже знаю…',
       later: 'Позже',
       byDeadline: '📅 По сроку',
       perDay: '🔢 По количеству в день',
@@ -543,6 +554,7 @@ export const texts = {
     textTitle: (title: string) => `📖 «${title}»`,
     learned: (learned: string, total: string, percent: number) =>
       `Выучено: ${learned} из ${total} (${percent}%).`,
+    known: (total: string) => `Повторяется также ${total}, которые вы знали до плана.`,
     paceDeadline: (perDay: string, deadline: string) => `Темп: ${perDay} в день, к ${deadline}.`,
     pacePerDay: (perDay: string) => `Темп: ${perDay} в день.`,
     endDate: (date: string) => `Заучивание закончится ${date}.`,

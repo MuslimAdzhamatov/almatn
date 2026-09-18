@@ -62,10 +62,7 @@ export function summarizePlan(
   });
   // Известные единицы идут тем же темпом рядом с новыми и добавляют повторов.
   const known = knownCalendar(draft.known ?? null, pace.unitsPerDay, draft.startDate, restDays);
-  const events = [
-    ...reviewEvents(calendar),
-    ...reviewEvents(known, KNOWN_REVIEW_OFFSET_DAYS),
-  ];
+  const events = [...reviewEvents(calendar), ...reviewEvents(known, KNOWN_REVIEW_OFFSET_DAYS)];
   const lastDate = maxDate(pace.endDate, known.at(-1)?.date ?? pace.endDate);
   const load = forecastLoad(events, pace.firstDate, lastDate);
   return {

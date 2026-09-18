@@ -67,12 +67,24 @@ export function renderPlan(screen: Shown, next?: NextPortion): RenderedMessage {
           .row()
           .text(b.range, cb(token, 'range'))
           .row()
+          .text(b.known, cb(token, 'known'))
+          .row()
           .text(b.later, cb(token, 'later')),
       };
     }
 
     case 'scope_input':
       return { text: t.scopeInput(count(screen.total, screen.unit), screen.invalid) };
+
+    case 'known_input':
+      return {
+        text: t.knownInput(
+          unitNounMany(screen.unit.strategy, screen.unit.unitName),
+          screen.lineFrom,
+          screen.lineTo - 1,
+          screen.invalid,
+        ),
+      };
 
     case 'pace':
       return {
@@ -229,6 +241,19 @@ function confirmText(screen: Extract<PlanScreen, { kind: 'confirm' }>): string {
       unitRangeLabel(screen.lineFrom, screen.lineTo, unit.strategy, unit.unitName).toLowerCase(),
       count(summary.totalUnits, unit),
     ),
+    ...(screen.knownFrom !== null && screen.knownTo !== null
+      ? [
+          t.known(
+            unitRangeLabel(
+              screen.knownFrom,
+              screen.knownTo,
+              unit.strategy,
+              unit.unitName,
+            ).toLowerCase(),
+            count(summary.knownUnits, unit),
+          ),
+        ]
+      : []),
     summary.deadlineDate
       ? t.paceDeadline(perDay, formatUserDate(summary.deadlineDate))
       : t.pacePerDay(perDay),

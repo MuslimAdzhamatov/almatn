@@ -74,6 +74,15 @@ enum PortionStatus {
   completed
 }
 
+/**
+ * Откуда взялась порция: обычная порция заучивания или единицы,
+ * которые пользователь знал до плана («Уже знаю») — они только повторяются.
+ */
+enum PortionKind {
+  learning
+  known
+}
+
 enum ReviewStage {
   learn_reminder
   rep_12h
@@ -262,6 +271,9 @@ model Plan {
   restDays         Int[] // 0–2 значения, 1 = пн … 7 = вс
   status           PlanStatus @default(active)
   nextLine         Int // первая строка следующей порции
+  // «Уже знаю»: единицы, известные до плана — они не выдаются, но повторяются.
+  knownFrom        Int?
+  knownTo          Int?
   estimatedEndDate DateTime?  @db.Date
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
@@ -280,6 +292,7 @@ model Portion {
   seq         Int // 1, 2, 3 … в плане
   lineStart   Int
   lineEnd     Int
+  kind        PortionKind   @default(learning)
   status      PortionStatus @default(sent)
   sentAt      DateTime
   learnedAt   DateTime?

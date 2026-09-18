@@ -1,4 +1,4 @@
-import type { NewPlan, PlanRecord, PlansStore } from '../../app/ports.js';
+import type { NewKnownPortion, NewPlan, PlanRecord, PlansStore } from '../../app/ports.js';
 import { dbDateToIso, isoToDbDate } from '../../core/plan/dates.js';
 import { Prisma, type Plan } from '../../generated/prisma/client.js';
 import type { Db } from '../client.js';
@@ -20,6 +20,8 @@ export function toPlanRecord(row: Plan): PlanRecord {
     restDays: row.restDays,
     status: row.status,
     nextLine: row.nextLine,
+    knownFrom: row.knownFrom,
+    knownTo: row.knownTo,
     estimatedEndDate: row.estimatedEndDate && dbDateToIso(row.estimatedEndDate),
   };
 }
@@ -29,15 +31,39 @@ const isUniqueViolation = (err: unknown) =>
 
 export function createPlansRepository(db: Db): PlansStore {
   return {
-    async create(plan: NewPlan) {
+    async create(plan: NewPlan, known: readonly NewKnownPortion[] = []) {
       try {
-        const row = await db.plan.create({
-          data: {
-            ...plan,
-            startDate: isoToDbDate(plan.startDate),
-            deadlineDate: plan.deadlineDate && isoToDbDate(plan.deadlineDate),
-            estimatedEndDate: plan.estimatedEndDate && isoToDbDate(plan.estimatedEndDate),
-          },
+        // План и уже известные единицы — одной транзакцией: иначе при сбое остался бы
+        // план, в котором известное не повторяется.
+        const row = await db.$transaction(async (tx) => {
+          const created = await tx.plan.create({
+            data: {
+              ...plan,
+              startDate: isoToDbDate(plan.startDate),
+              deadlineDate: plan.deadlineDate && isoToDbDate(plan.deadlineDate),
+              estimatedEndDate: plan.estimatedEndDate && isoToDbDate(plan.estimatedEndDate),
+            },
+          });
+          for (const portion of known) {
+            await tx.portion.create({
+              data: {
+                planId: created.id,
+                seq: portion.seq,
+                lineStart: portion.lineStart,
+                lineEnd: portion.lineEnd,
+                kind: 'known',
+                status: 'learned',
+                // Известное не выдавалось: выдачей считается слот, с которого пошли повторы.
+                sentAt: portion.anchorAt,
+                learnedAt: portion.anchorAt,
+                anchorAt: portion.anchorAt,
+                reviews: {
+                  create: portion.reviews.map((r) => ({ stage: r.stage, dueAt: r.dueAt })),
+                },
+              },
+            });
+          }
+          return created;
         });
         return toPlanRecord(row);
       } catch (err) {

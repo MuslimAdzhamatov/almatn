@@ -8,6 +8,7 @@ import {
   parseUserDate,
   type IsoDate,
 } from '../core/plan/dates.js';
+import { knownCalendar, parseKnownUpTo, type KnownRange } from '../core/plan/known.js';
 import { reviewEvents, type LoadEvent } from '../core/plan/load.js';
 import {
   forecastOverlap,
@@ -22,10 +23,12 @@ import {
   type PaceInput,
 } from '../core/plan/pace.js';
 import { summarizePlan, type PlanSummary } from '../core/plan/summary.js';
+import { KNOWN_REVIEW_STAGES, reviewChain, slotOn } from '../core/srs/slots.js';
 import { formatHHmm, parseHHmm } from '../core/time/hhmm.js';
 import { buildDailySchedule, type DailySchedule } from '../core/time/schedule.js';
 import type {
   DialogStore,
+  NewKnownPortion,
   ParseStrategy,
   PlansStore,
   TextRecord,
@@ -44,6 +47,7 @@ const FLOW = 'plan_create';
 type Step =
   | 'scope'
   | 'scope_input'
+  | 'known_input'
   | 'pace'
   | 'deadline_kind'
   | 'deadline_input'
@@ -60,8 +64,12 @@ interface Draft {
   /** Одноразовый токен диалога в callback_data: кнопки прошлых диалогов не срабатывают. */
   token: string;
   textId: number;
+  /** Начало заучивания: за известной частью, если она указана. */
   lineFrom: number;
   lineTo: number;
+  /** «Уже знаю»: единицы до начала заучивания — они только повторяются. */
+  knownFrom: number | null;
+  knownTo: number | null;
   startDate: IsoDate;
   restDays: number[];
   /** Выходные уже выбирались в этом диалоге — после темпа сразу к расчёту. */
@@ -97,6 +105,15 @@ export type DeadlineError = 'format' | 'too_long' | 'deadline_before_start' | 'n
 export type PlanScreen =
   | { kind: 'scope'; token: string; title: string; total: number; unit: UnitInfo }
   | { kind: 'scope_input'; token: string; total: number; unit: UnitInfo; invalid: boolean }
+  | {
+      kind: 'known_input';
+      token: string;
+      unit: UnitInfo;
+      /** Границы допустимого ответа: знать можно с lineFrom по lineTo − 1. */
+      lineFrom: number;
+      lineTo: number;
+      invalid: boolean;
+    }
   | { kind: 'pace'; token: string; total: number; unit: UnitInfo }
   | { kind: 'deadline_kind'; token: string; startDate: IsoDate }
   | {
@@ -127,6 +144,8 @@ export type PlanScreen =
       unit: UnitInfo;
       lineFrom: number;
       lineTo: number;
+      knownFrom: number | null;
+      knownTo: number | null;
       paceMode: PaceInput['mode'];
       startDate: IsoDate;
       today: IsoDate;
@@ -163,6 +182,7 @@ const isDeadlineKind = (value: string): value is DeadlineKind =>
 
 const TEXT_STEPS: readonly Step[] = [
   'scope_input',
+  'known_input',
   'deadline_input',
   'per_day',
   'start_date',
@@ -173,6 +193,15 @@ const unitOf = (text: TextRecord): UnitInfo => ({
   strategy: text.parseStrategy ?? 'manual_page',
   unitName: text.unitName,
 });
+
+/** Известная часть черновика: null — пользователь учит всё с начала. */
+const knownOf = (draft: Draft): KnownRange | null =>
+  draft.knownFrom !== null && draft.knownTo !== null
+    ? { lineFrom: draft.knownFrom, lineTo: draft.knownTo }
+    : null;
+
+/** Начало диапазона, который пользователь выбрал на шаге «что учить». */
+const scopeFrom = (draft: Draft): number => draft.knownFrom ?? draft.lineFrom;
 
 const parsePositive = (input: string): number | null => {
   const value = Number(input.trim());
@@ -246,6 +275,8 @@ export function createPlans({
         return { kind: 'scope', token, title: text.title, total, unit };
       case 'scope_input':
         return { kind: 'scope_input', token, total, unit, invalid: false };
+      case 'known_input':
+        return knownScreen(draft, unit, false);
       case 'pace':
         return { kind: 'pace', token, total: draft.lineTo - draft.lineFrom + 1, unit };
       case 'deadline_kind':
@@ -265,6 +296,29 @@ export function createPlans({
       case 'send_time':
         return { kind: 'send_time', token, invalid: false };
     }
+  }
+
+  function knownScreen(draft: Draft, unit: UnitInfo, invalid: boolean): PlanScreen {
+    return {
+      kind: 'known_input',
+      token: draft.token,
+      unit,
+      lineFrom: scopeFrom(draft),
+      lineTo: draft.lineTo,
+      invalid,
+    };
+  }
+
+  /** «Уже знаю»: заучивание начинается за известной частью. */
+  async function setKnown(userId: bigint, s: Session, input: string): Promise<PlanScreen> {
+    const from = scopeFrom(s.draft);
+    const value = parseKnownUpTo(input, from, s.draft.lineTo);
+    if (value === null) return knownScreen(s.draft, unitOf(s.text), true);
+    return show(
+      userId,
+      'pace',
+      changed(s, { knownFrom: from, knownTo: value, lineFrom: value + 1 }),
+    );
   }
 
   function deadlineScreen(draft: Draft, error: DeadlineError | null): PlanScreen {
@@ -342,6 +396,7 @@ export function createPlans({
         startDate: draft.startDate,
         restDays: draft.restDays,
         pace: draft.pace,
+        known: knownOf(draft),
       },
       limits,
     );
@@ -364,6 +419,8 @@ export function createPlans({
       unit,
       lineFrom: draft.lineFrom,
       lineTo: draft.lineTo,
+      knownFrom: draft.knownFrom,
+      knownTo: draft.knownTo,
       paceMode: draft.pace.mode,
       startDate: draft.startDate,
       today,
@@ -447,27 +504,56 @@ export function createPlans({
     return review(userId, s, now);
   }
 
+  /**
+   * Известные единицы: по порции на рабочий день тем же темпом, сразу выученные.
+   * Повторы идут от основного слота этого дня по укороченной цепочке (без +12 ч).
+   */
+  function knownPortions(
+    known: KnownRange | null,
+    summary: PlanSummary,
+    startDate: IsoDate,
+    settings: Configured,
+    now: Date,
+  ): NewKnownPortion[] {
+    return knownCalendar(known, summary.unitsPerDay, startDate, summary.restDays).map((portion) => {
+      const anchor = slotOn(portion.date, 'main', settings);
+      return {
+        seq: portion.seq,
+        lineStart: portion.from,
+        lineEnd: portion.to,
+        anchorAt: anchor.at,
+        reviews: reviewChain(anchor, now, settings, KNOWN_REVIEW_STAGES),
+      };
+    });
+  }
+
   async function start(userId: bigint, s: Session, now: Date): Promise<PlanScreen> {
     const { draft, text } = s;
     if (!draft.pace) return show(userId, 'pace', s);
-    const summary = summarizePlan({ ...draft, pace: draft.pace }, limits);
+    const known = knownOf(draft);
+    const summary = summarizePlan({ ...draft, pace: draft.pace, known }, limits);
     if (!summary.ok) return review(userId, s, now);
     const settings = await requireSettings(userId);
-    const created = await plans.create({
-      textId: text.id,
-      userId,
-      lineFrom: draft.lineFrom,
-      lineTo: draft.lineTo,
-      unitsPerDay: summary.unitsPerDay,
-      paceMode: draft.pace.mode,
-      startDate: draft.startDate,
-      deadlineDate: summary.deadlineDate,
-      deadlineInput:
-        draft.pace.mode === 'deadline' ? encodeDeadlineInput(draft.pace.deadline) : null,
-      restDays: summary.restDays,
-      nextLine: draft.lineFrom,
-      estimatedEndDate: summary.endDate,
-    });
+    const created = await plans.create(
+      {
+        textId: text.id,
+        userId,
+        lineFrom: draft.lineFrom,
+        lineTo: draft.lineTo,
+        unitsPerDay: summary.unitsPerDay,
+        paceMode: draft.pace.mode,
+        startDate: draft.startDate,
+        deadlineDate: summary.deadlineDate,
+        deadlineInput:
+          draft.pace.mode === 'deadline' ? encodeDeadlineInput(draft.pace.deadline) : null,
+        restDays: summary.restDays,
+        nextLine: draft.lineFrom,
+        knownFrom: known?.lineFrom ?? null,
+        knownTo: known?.lineTo ?? null,
+        estimatedEndDate: summary.endDate,
+      },
+      knownPortions(known, summary, draft.startDate, settings, now),
+    );
     await dialogs.clear(userId);
     if (!created) return { kind: 'already_planned', title: text.title };
     return {
@@ -496,6 +582,8 @@ export function createPlans({
         textId,
         lineFrom: 1,
         lineTo: text.totalLines,
+        knownFrom: null,
+        knownTo: null,
         startDate: localDate(now, settings.timezone),
         restDays: previous?.restDays ?? [],
         restChosen: false,
@@ -520,9 +608,20 @@ export function createPlans({
 
       switch (action) {
         case 'all':
-          return show(userId, 'pace', changed(s, { lineFrom: 1, lineTo: s.text.totalLines }));
+          return show(
+            userId,
+            'pace',
+            changed(s, {
+              lineFrom: 1,
+              lineTo: s.text.totalLines,
+              knownFrom: null,
+              knownTo: null,
+            }),
+          );
         case 'range':
           return show(userId, 'scope_input', s);
+        case 'known':
+          return show(userId, 'known_input', s);
         case 'later':
           await dialogs.clear(userId);
           return { kind: 'postponed' };
@@ -606,7 +705,12 @@ export function createPlans({
           return show(
             userId,
             'pace',
-            changed(s, { lineFrom: range.pageFrom, lineTo: range.pageTo }),
+            changed(s, {
+              lineFrom: range.pageFrom,
+              lineTo: range.pageTo,
+              knownFrom: null,
+              knownTo: null,
+            }),
           );
         }
         case 'deadline_input': {
@@ -620,6 +724,8 @@ export function createPlans({
           if (!value) return deadlineScreen(draft, 'format');
           return setDeadline(userId, s, { kind, value }, now);
         }
+        case 'known_input':
+          return setKnown(userId, s, input);
         case 'per_day':
           return setPerDay(userId, s, parsePositive(input), now);
         case 'start_date':

@@ -147,10 +147,23 @@ export interface PlanRecord {
   restDays: number[];
   status: PlanStatus;
   nextLine: number;
+  /** «Уже знаю»: единицы, известные до плана — они не выдаются, но повторяются. */
+  knownFrom: number | null;
+  knownTo: number | null;
   estimatedEndDate: string | null;
 }
 
 export type NewPlan = Omit<PlanRecord, 'id' | 'status'>;
+
+/** Порция известных единиц: сразу выученная, с укороченной цепочкой повторов. */
+export interface NewKnownPortion {
+  seq: number;
+  lineStart: number;
+  lineEnd: number;
+  /** Слот, от которого считается цепочка (основной слот рабочего дня). */
+  anchorAt: Date;
+  reviews: readonly { stage: ReviewStageName; dueAt: Date }[];
+}
 
 /** Открытый план (active | learning_done) другого текста — для предупреждения о наложении. */
 export interface OpenPlan extends PlanRecord {
@@ -164,8 +177,11 @@ export interface ScheduledReview {
 }
 
 export interface PlansStore {
-  /** null — у текста уже есть открытый план (частичный уникальный индекс). */
-  create(plan: NewPlan): Promise<PlanRecord | null>;
+  /**
+   * План и порции уже известных единиц одной транзакцией.
+   * null — у текста уже есть открытый план (частичный уникальный индекс).
+   */
+  create(plan: NewPlan, known?: readonly NewKnownPortion[]): Promise<PlanRecord | null>;
   findOpenByText(textId: number): Promise<PlanRecord | null>;
   listOpenByUser(userId: bigint): Promise<OpenPlan[]>;
   /** Повторы пользователя со статусом pending | sent | missed, кроме плана этого текста. */
@@ -184,6 +200,7 @@ export type ReviewStageName =
   'learn_reminder' | 'rep_12h' | 'rep_1d' | 'rep_3d' | 'rep_2w' | 'rep_1m';
 export type ReviewStatusName = 'pending' | 'sent' | 'confirmed' | 'missed' | 'cancelled';
 export type PortionStatusName = 'sent' | 'learned' | 'completed';
+export type PortionKindName = 'learning' | 'known';
 export type DeliveryKindName =
   'portion' | 'review_batch' | 'debt_reminder' | 'learn_reminder' | 'pause_ending' | 'autopause';
 export type DeliveryStatusName =
@@ -229,6 +246,8 @@ export interface PortionRecord {
   seq: number;
   lineStart: number;
   lineEnd: number;
+  /** known — единицы, известные до плана: новой порцией не выдавались. */
+  kind: PortionKindName;
   status: PortionStatusName;
   sentAt: Date;
   learnedAt: Date | null;
@@ -306,7 +325,10 @@ export interface LearningStore {
   planContext(planId: number): Promise<PlanContext | null>;
   /** Открытый план текста. */
   textPlanContext(textId: number): Promise<PlanContext | null>;
+  /** Последняя выданная порция заучивания (известные единицы не считаются). */
   lastPortion(planId: number): Promise<PortionRecord | null>;
+  /** Номер для новой порции: на единицу больше самого большого в плане. */
+  nextPortionSeq(planId: number): Promise<number>;
   getPortion(portionId: number): Promise<PortionRecord | null>;
   /** Невыученная порция плана (статус sent), если есть. */
   unlearnedPortion(planId: number): Promise<PortionRecord | null>;
@@ -537,6 +559,7 @@ export interface LibraryText {
 export interface LibraryPortion {
   lineStart: number;
   lineEnd: number;
+  kind: PortionKindName;
   status: PortionStatusName;
   sentAt: Date;
   learnedAt: Date | null;

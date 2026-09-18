@@ -19,6 +19,7 @@ const text: TextProgress = {
     unitsPerDay: 5,
     deadlineDate: '2026-12-30',
     estimatedEndDate: '2026-12-29',
+    knownUnits: 0,
     learnedUnits: 45,
     totalUnits: 448,
     percent: 10,

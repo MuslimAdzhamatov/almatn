@@ -39,6 +39,7 @@ function addLearned(
     seq,
     lineStart,
     lineEnd,
+    kind: 'learning',
     status: 'learned',
     sentAt: at('2026-09-01T03:00:00Z'),
     learnedAt: at('2026-09-01T03:30:00Z'),

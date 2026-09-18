@@ -34,6 +34,7 @@ export function progressLines(text: TextProgress): string[] {
   const lines = [t.textTitle(text.title)];
   if (!plan) return [...lines, t.noPlanLine];
   lines.push(t.learned(String(plan.learnedUnits), count(plan.totalUnits, text), plan.percent));
+  if (plan.knownUnits > 0) lines.push(t.known(count(plan.knownUnits, text)));
   if (plan.status === 'completed') return [...lines, t.completed];
   if (plan.status === 'learning_done') {
     lines.push(t.learningDone(plan.lastReviewDate && formatUserDate(plan.lastReviewDate)));

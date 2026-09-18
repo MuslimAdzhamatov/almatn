@@ -235,7 +235,8 @@ export function createLearning({
       await finishIfLearned(ctx);
       return false;
     }
-    const seq = ((await store.lastPortion(plan.id))?.seq ?? 0) + 1;
+    // Нумерация общая с порциями известных единиц — иначе seq в плане повторится.
+    const seq = await store.nextPortionSeq(plan.id);
     const created = await store.createPortion({
       planId: plan.id,
       seq,

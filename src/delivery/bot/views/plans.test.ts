@@ -29,6 +29,8 @@ const schedule = buildDailySchedule({
 const screens: Exclude<PlanScreen, { kind: 'stale' }>[] = [
   { kind: 'scope', token, title: 'Манзума', total: 448, unit },
   { kind: 'scope_input', token, total: 448, unit, invalid: true },
+  { kind: 'known_input', token, unit, lineFrom: 1, lineTo: 448, invalid: false },
+  { kind: 'known_input', token, unit, lineFrom: 1, lineTo: 448, invalid: true },
   { kind: 'pace', token, total: 448, unit },
   { kind: 'deadline_kind', token, startDate: '2026-09-16' },
   ...(['days', 'months', 'date'] as const).map((input) => ({
@@ -52,6 +54,8 @@ const screens: Exclude<PlanScreen, { kind: 'stale' }>[] = [
     unit,
     lineFrom: 1,
     lineTo: 448,
+    knownFrom: null,
+    knownTo: null,
     paceMode: 'deadline',
     startDate: '2026-09-19',
     today: '2026-09-16',

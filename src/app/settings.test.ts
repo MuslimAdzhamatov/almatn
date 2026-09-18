@@ -33,6 +33,8 @@ function setup(options: { plans?: boolean } = {}) {
     lineTo: 12,
     unitsPerDay: 3,
     paceMode: 'per_day',
+    knownFrom: null,
+    knownTo: null,
     startDate: '2026-09-16',
     deadlineDate: null,
     deadlineInput: null,

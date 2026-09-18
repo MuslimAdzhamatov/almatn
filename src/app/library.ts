@@ -37,6 +37,8 @@ export interface PlanProgress {
   estimatedEndDate: IsoDate | null;
   learnedUnits: number;
   totalUnits: number;
+  /** Единицы, известные до плана: только повторяются («Уже знаю»). */
+  knownUnits: number;
   percent: number;
   reviewsDone: number;
   reviewsMissed: number;
@@ -97,7 +99,9 @@ export function createLibrary({ library, store, learning, reviews, files }: Libr
     user: LearnerSettings,
     now: Date,
   ): Promise<PlanProgress> {
-    const portions = await library.portions(plan.id);
+    const all = await library.portions(plan.id);
+    // Известные единицы не заучивались — в проценте прогресса не участвуют.
+    const portions = all.filter((p) => p.kind === 'learning');
     const planReviews = await library.reviews(plan.id);
     let learnedUnits = 0;
     for (const p of portions) {
@@ -105,6 +109,10 @@ export function createLibrary({ library, store, learning, reviews, files }: Libr
         learnedUnits += await store.countUnits(text.id, p.lineStart, p.lineEnd);
     }
     const totalUnits = await store.countUnits(text.id, plan.lineFrom, plan.lineTo);
+    const knownUnits =
+      plan.knownFrom !== null && plan.knownTo !== null
+        ? await store.countUnits(text.id, plan.knownFrom, plan.knownTo)
+        : 0;
     const duties = [
       ...portions.map((p) => ({ dueAt: p.sentAt, doneAt: p.learnedAt })),
       ...planReviews.map((r) => ({
@@ -123,6 +131,7 @@ export function createLibrary({ library, store, learning, reviews, files }: Libr
       estimatedEndDate: plan.estimatedEndDate,
       learnedUnits,
       totalUnits,
+      knownUnits,
       percent: totalUnits > 0 ? Math.floor((learnedUnits * 100) / totalUnits) : 0,
       reviewsDone: planReviews.length - open.length,
       reviewsMissed: planReviews.filter((r) => r.status === 'missed').length,

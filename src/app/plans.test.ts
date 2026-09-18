@@ -3,6 +3,7 @@ import { createPlans, type PlanLimits, type PlanScreen } from './plans.js';
 import type {
   DialogSnapshot,
   DialogStore,
+  NewKnownPortion,
   NewPlan,
   OpenPlan,
   PlanRecord,
@@ -75,13 +76,15 @@ function setup() {
   };
 
   const planRows: PlanRecord[] = [];
+  const knownRows: NewKnownPortion[] = [];
   const reviews: ScheduledReview[] = [];
   const isOpen = (p: PlanRecord) => p.status === 'active' || p.status === 'learning_done';
   const plans: PlansStore = {
-    create: async (plan: NewPlan) => {
+    create: async (plan: NewPlan, known: readonly NewKnownPortion[] = []) => {
       if (planRows.some((p) => p.textId === plan.textId && isOpen(p))) return null;
       const row: PlanRecord = { ...plan, id: planRows.length + 1, status: 'active' };
       planRows.push(row);
+      knownRows.push(...known);
       return row;
     },
     findOpenByText: async (textId) =>
@@ -102,7 +105,7 @@ function setup() {
     limits: LIMITS,
     newToken: () => `tok${++token}`,
   });
-  return { service, planRows, reviews, settings, dialogMap, texts };
+  return { service, planRows, knownRows, reviews, settings, dialogMap, texts };
 }
 
 type Service = ReturnType<typeof setup>['service'];
@@ -359,5 +362,65 @@ describe('пороги из конфига', () => {
     const { limits } = await import('../config/limits.js');
     const planLimits: PlanLimits = limits.plan;
     expect(planLimits).toMatchObject({ maxUnitsPerDay: 10, maxPeakReview: 50 });
+  });
+});
+
+describe('«Уже знаю»', () => {
+  /** Весь текст → «Часть уже знаю» → номер → темп → выходные → подтверждение. */
+  async function toKnownConfirm(service: Service, knownTo: string, perDay = 5) {
+    const scope = expectKind(await service.begin(USER, 1, NOW), 'scope');
+    const t = scope.token;
+    expectKind(await service.act(USER, t, 'known', '', NOW), 'known_input');
+    const after = await service.handleText(USER, knownTo, NOW);
+    return { token: t, after, perDay, service };
+  }
+
+  it('заучивание начинается за известной частью, известное идёт на повтор', async () => {
+    const { service, planRows, knownRows } = setup();
+    const { token, after } = await toKnownConfirm(service, '100');
+    expectKind(after, 'pace');
+    await service.act(USER, token, 'pace', 'per_day', NOW);
+    await service.act(USER, token, 'upd', '5', NOW);
+    const confirm = expectKind(await service.act(USER, token, 'restnone', '', NOW), 'confirm');
+    expect(confirm).toMatchObject({ lineFrom: 101, lineTo: 448, knownFrom: 1, knownTo: 100 });
+    // Учить осталось 348 единиц, известные 100 — только повторяются.
+    expect(confirm.summary).toMatchObject({ totalUnits: 348, knownUnits: 100, unitsPerDay: 5 });
+
+    expectKind(await service.act(USER, token, 'go', '', NOW), 'started');
+    expect(planRows[0]).toMatchObject({ lineFrom: 101, nextLine: 101, knownFrom: 1, knownTo: 100 });
+    // 100 известных единиц по 5 в день — 20 порций, по одной на рабочий день.
+    expect(knownRows).toHaveLength(20);
+    expect(knownRows[0]).toMatchObject({ seq: 1, lineStart: 1, lineEnd: 5 });
+    expect(knownRows[19]).toMatchObject({ seq: 20, lineStart: 96, lineEnd: 100 });
+    // Первая порция известного привязана к основному слоту дня начала (16.09, 06:00 МСК).
+    expect(knownRows[0]!.anchorAt.toISOString()).toBe('2026-09-16T03:00:00.000Z');
+    expect(knownRows[1]!.anchorAt.toISOString()).toBe('2026-09-17T03:00:00.000Z');
+    // Цепочка укороченная: без +12 ч, первый повтор — через сутки.
+    expect(knownRows[0]!.reviews.map((r) => r.stage)).toEqual([
+      'rep_1d',
+      'rep_3d',
+      'rep_2w',
+      'rep_1m',
+    ]);
+    expect(knownRows[0]!.reviews[0]!.dueAt.toISOString()).toBe('2026-09-17T03:00:00.000Z');
+  });
+
+  it('номер вне диапазона возвращает к вопросу', async () => {
+    const { service } = setup();
+    const { after } = await toKnownConfirm(service, '448');
+    expect(expectKind(after, 'known_input').invalid).toBe(true);
+  });
+
+  it('смена диапазона сбрасывает известную часть', async () => {
+    const { service, planRows, knownRows } = setup();
+    const { token } = await toKnownConfirm(service, '100');
+    await service.act(USER, token, 'all', '', NOW);
+    await service.act(USER, token, 'pace', 'per_day', NOW);
+    await service.act(USER, token, 'upd', '5', NOW);
+    const confirm = expectKind(await service.act(USER, token, 'restnone', '', NOW), 'confirm');
+    expect(confirm).toMatchObject({ lineFrom: 1, knownFrom: null, knownTo: null });
+    await service.act(USER, token, 'go', '', NOW);
+    expect(planRows[0]).toMatchObject({ lineFrom: 1, knownFrom: null, knownTo: null });
+    expect(knownRows).toHaveLength(0);
   });
 });

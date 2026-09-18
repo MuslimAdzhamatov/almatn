@@ -68,6 +68,8 @@ export function setup(
     lineTo: totalLines,
     unitsPerDay: options.unitsPerDay ?? 3,
     paceMode: 'per_day',
+    knownFrom: null,
+    knownTo: null,
     startDate: '2026-09-16',
     deadlineDate: null,
     deadlineInput: null,
@@ -170,7 +172,9 @@ export function setup(
           ['sent', 'replaced'].includes(d.status) &&
           d.slotAt >= since,
       ),
-    lastPortion: async () => portions.at(-1) ?? null,
+    nextPortionSeq: async (planId) =>
+      (portions.filter((p) => p.planId === planId).at(-1)?.seq ?? 0) + 1,
+    lastPortion: async () => portions.filter((p) => p.kind === 'learning').at(-1) ?? null,
     getPortion: async (pid) => portions.find((p) => p.id === pid) ?? null,
     unlearnedPortion: async () => portions.find((p) => p.status === 'sent') ?? null,
     textReviews: async () =>
@@ -229,6 +233,7 @@ export function setup(
         seq: p.seq,
         lineStart: p.lineStart,
         lineEnd: p.lineEnd,
+        kind: 'learning',
         status: 'sent',
         sentAt: p.sentAt,
         learnedAt: null,

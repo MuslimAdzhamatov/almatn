@@ -77,6 +77,7 @@ const toPortion = (row: Portion): PortionRecord => ({
   seq: row.seq,
   lineStart: row.lineStart,
   lineEnd: row.lineEnd,
+  kind: row.kind,
   status: row.status,
   sentAt: row.sentAt,
   learnedAt: row.learnedAt,
@@ -214,8 +215,17 @@ export function createLearningRepository(db: Db): LearningStore {
     },
 
     async lastPortion(planId) {
-      const row = await db.portion.findFirst({ where: { planId }, orderBy: { seq: 'desc' } });
+      // Только выданные порции: известные единицы новой порцией не были.
+      const row = await db.portion.findFirst({
+        where: { planId, kind: 'learning' },
+        orderBy: { seq: 'desc' },
+      });
       return row && toPortion(row);
+    },
+
+    async nextPortionSeq(planId) {
+      const row = await db.portion.findFirst({ where: { planId }, orderBy: { seq: 'desc' } });
+      return (row?.seq ?? 0) + 1;
     },
 
     async getPortion(portionId) {
