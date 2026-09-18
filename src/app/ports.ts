@@ -58,6 +58,8 @@ export interface ParseRequest {
   strategy: 'auto' | ParseStrategy;
   /** Для `manual_split` — сколько равных полос резать со страницы. */
   linesPerPage?: number;
+  /** Для `paragraphs` — делить абзац длиннее этого числа строк (не задано — не делить). */
+  maxLines?: number;
   /** Диапазон страниц, обе границы включительно (с 1); не задан — весь файл. */
   pageFrom?: number;
   pageTo?: number;

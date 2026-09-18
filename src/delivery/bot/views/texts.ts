@@ -44,6 +44,7 @@ export function reparseKeyboard(summary: TextSummary): InlineKeyboard {
     keyboard.text(t.buttons.strategy[strategy], `${textCallbacks.reparse}:${id}:${strategy}`).row();
   }
   keyboard.text(t.buttons.strategy.manual_split, `${textCallbacks.reparseInput}:${id}:lines`).row();
+  keyboard.text(t.buttons.splitParagraphs, `${textCallbacks.reparseInput}:${id}:maxlines`).row();
   keyboard.text(t.buttons.pageRange, `${textCallbacks.reparseInput}:${id}:pages`).row();
   return keyboard.text(t.buttons.back, `${textCallbacks.reparseMenu}:${id}:back`);
 }
@@ -206,10 +207,14 @@ export function actionMessage(action: ShownAction): RenderedMessage {
       return { text: t.askPageRange(action.pageCount) };
     case 'ask_lines_per_page':
       return { text: t.askLinesPerPage(action.max) };
+    case 'ask_max_lines':
+      return { text: t.askMaxLines(action.max, action.current) };
     case 'invalid_page_range':
       return { text: t.invalidPageRange(action.pageCount) };
     case 'invalid_lines_per_page':
       return { text: t.invalidLinesPerPage(action.max) };
+    case 'invalid_max_lines':
+      return { text: t.invalidMaxLines(action.max) };
     case 'cancelled':
       return { text: t.cancelled };
     case 'invalid_title':

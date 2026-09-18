@@ -87,7 +87,7 @@ export async function parsePdf(
   if (!plan) {
     // Ни номеров, ни пригодного текстового слоя — скан: строки ищутся по изображению страниц.
     if (request.strategy !== 'text_lines' && request.strategy !== 'numbers') {
-      const byImage = await parseByImage(file, workDir, tools, pages, discard, request.strategy);
+      const byImage = await parseByImage(file, workDir, tools, pages, discard, request);
       if (byImage) return byImage;
     }
     return manualParse(sizes, request, request.strategy === 'auto');
@@ -180,7 +180,7 @@ export async function parseImagePages(
   if (request.strategy === 'manual_page' || request.strategy === 'manual_split') {
     return manualParse(sizes, request);
   }
-  const parsed = buildImageParse(scanned, request.strategy);
+  const parsed = buildImageParse(scanned, request);
   if (parsed) return parsed;
   return request.strategy === 'auto' ? manualParse(sizes, request, true) : null;
 }
@@ -223,7 +223,7 @@ async function parseByImage(
   tools: PdfTools,
   pages: readonly PdfPageWords[],
   discard: (path: string) => Promise<void>,
-  strategy: ParseRequest['strategy'],
+  request: ParseRequest,
 ): Promise<ParsedPdf | null> {
   const wanted = new Set(pages.map((page) => page.page));
   const firstWanted = pages[0]!.page;
@@ -264,17 +264,15 @@ async function parseByImage(
     }
   }
 
-  return buildImageParse(scanned, strategy);
+  return buildImageParse(scanned, request);
 }
 
 /**
  * Общая часть разбора по изображению: обычная строка, классификация полос, единицы.
  * При `auto` сначала пробуем абзацы (проза: хадисы), потом строки (стихи и сканы поэзии).
  */
-function buildImageParse(
-  scanned: readonly Scanned[],
-  strategy: ParseRequest['strategy'],
-): ParsedPdf | null {
+function buildImageParse(scanned: readonly Scanned[], request: ParseRequest): ParsedPdf | null {
+  const { strategy } = request;
   const bands = scanned.flatMap((page) => page.bands);
   const height = typicalHeight(bands, imageLinesDefaults.minHeightShare);
   if (height <= 0) return null;
@@ -291,7 +289,9 @@ function buildImageParse(
   const cleaned = dropRunningBands(classified, height);
 
   if (strategy === 'auto' || strategy === 'paragraphs') {
-    const paragraphs = paragraphsToBoxes(dropFootnotes(cleaned));
+    const paragraphs = paragraphsToBoxes(dropFootnotes(cleaned), {
+      ...(request.maxLines !== undefined && { maxLinesPerUnit: request.maxLines }),
+    });
     if (paragraphs) return imageResult('paragraphs', paragraphs);
     if (strategy === 'paragraphs') return null;
   }

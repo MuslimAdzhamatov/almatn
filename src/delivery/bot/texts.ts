@@ -215,6 +215,16 @@ export const texts = {
     askLinesPerPage: (max: number) =>
       `Сколько строк резать со страницы? Напишите число от 1 до ${max} — страница поделится на равные полосы.`,
     invalidLinesPerPage: (max: number) => `Напишите число от 1 до ${max}.`,
+    askMaxLines: (max: number, current: number | null) =>
+      [
+        'По сколько строк делить длинные абзацы?',
+        'Абзац короче этого остаётся целым, длинный делится на равные части.',
+        current === null ? '' : `Сейчас: по ${current}.`,
+        `Напишите число от 1 до ${max} (обычно 4–6).`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    invalidMaxLines: (max: number) => `Напишите число от 1 до ${max}.`,
 
     buttons: {
       confirm: '✅ Всё верно',
@@ -228,6 +238,7 @@ export const texts = {
         manual_split: '✂️ N строк со страницы…',
       },
       pageRange: '📑 Выбрать страницы…',
+      splitParagraphs: '✂️ Делить длинные абзацы…',
       back: '← Назад',
       callAs: (unit: UnitName) => `Называть «${RANGE_LABELS[unit].toLowerCase()}»`,
       byPages: '📄 Разобрать постранично',

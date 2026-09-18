@@ -21,6 +21,8 @@ export interface ParagraphOptions {
   minParagraphs: number;
   /** Отступ с обеих сторон (доля обычной ширины строки), по которому узнаётся заголовок. */
   headingIndentShare: number;
+  /** Абзац длиннее этого числа строк делится на части (0 — не делить). */
+  maxLinesPerUnit: number;
 }
 
 const DEFAULTS: ParagraphOptions = {
@@ -29,7 +31,27 @@ const DEFAULTS: ParagraphOptions = {
   minLinesPerParagraph: 1.6,
   minParagraphs: 3,
   headingIndentShare: 0.05,
+  maxLinesPerUnit: 0,
 };
+
+/**
+ * Ровные части не длиннее max: 12 строк по 5 — это 4+4+4, а не 5+5+2.
+ * Так у длинного абзаца не остаётся огрызка в одну строку.
+ */
+export function splitEvenly<T>(items: readonly T[], max: number): T[][] {
+  if (max < 1 || items.length <= max) return [[...items]];
+  const parts = Math.ceil(items.length / max);
+  const base = Math.floor(items.length / parts);
+  const longer = items.length % parts; // первым частям достаётся на строку больше
+  const chunks: T[][] = [];
+  let start = 0;
+  for (let i = 0; i < parts; i++) {
+    const size = base + (i < longer ? 1 : 0);
+    chunks.push(items.slice(start, start + size));
+    start += size;
+  }
+  return chunks;
+}
 
 function median(values: readonly number[]): number {
   return percentile(values, 0.5);
@@ -144,10 +166,23 @@ export function paragraphsToBoxes(
     paragraphs.reduce((total, unit) => total + unit.lines.length, 0) / paragraphs.length;
   if (linesPerParagraph < opts.minLinesPerParagraph) return null;
 
-  const boxes = units.map((unit, index) => toBox(unit.lines, index + 1));
+  // Делить длинные абзацы — уже после проверок правдоподобия: они считаются по целым абзацам.
+  const split =
+    opts.maxLinesPerUnit > 0
+      ? units.flatMap((unit) =>
+          unit.heading
+            ? [unit]
+            : splitEvenly(unit.lines, opts.maxLinesPerUnit).map((part) => ({
+                lines: part,
+                heading: false,
+              })),
+        )
+      : units;
+
+  const boxes = split.map((unit, index) => toBox(unit.lines, index + 1));
   return attachHeadings(
     boxes,
-    units.map((unit) => unit.heading),
+    split.map((unit) => unit.heading),
   );
 }
 

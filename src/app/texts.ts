@@ -89,8 +89,10 @@ export type TextAction =
   | { kind: 'reparsing'; textId: number }
   | { kind: 'ask_page_range'; textId: number; pageCount: number }
   | { kind: 'ask_lines_per_page'; textId: number; max: number }
+  | { kind: 'ask_max_lines'; textId: number; max: number; current: number | null }
   | { kind: 'invalid_page_range'; textId: number; pageCount: number }
   | { kind: 'invalid_lines_per_page'; textId: number; max: number }
+  | { kind: 'invalid_max_lines'; textId: number; max: number }
   | { kind: 'cancelled' }
   | { kind: 'invalid_title'; maxLength: number }
   | { kind: 'stale' };
@@ -584,6 +586,7 @@ export function createTexts({
       const request: ParseRequest = {
         strategy,
         ...(previous.linesPerPage !== undefined && { linesPerPage: previous.linesPerPage }),
+        ...(previous.maxLines !== undefined && { maxLines: previous.maxLines }),
         ...(previous.pageFrom !== undefined && { pageFrom: previous.pageFrom }),
         ...(previous.pageTo !== undefined && { pageTo: previous.pageTo }),
         ...extra,
@@ -596,13 +599,20 @@ export function createTexts({
 
     /** Шаг ввода: диапазон страниц или сколько полос резать со страницы. */
     async askReparseInput(userId: bigint, textId: number, field: string): Promise<TextAction> {
-      if (field !== 'pages' && field !== 'lines') return { kind: 'stale' };
+      if (field !== 'pages' && field !== 'lines' && field !== 'maxlines') return { kind: 'stale' };
       const text = await ownText(userId, textId, 'awaiting_confirm');
       if (!text) return { kind: 'stale' };
       await dialogs.set(userId, { flow: FLOW, step: REPARSE_STEP, data: { textId, field } });
-      return field === 'pages'
-        ? { kind: 'ask_page_range', textId, pageCount: text.pageCount }
-        : { kind: 'ask_lines_per_page', textId, max: limits.pdf.maxLinesPerPage };
+      if (field === 'pages') return { kind: 'ask_page_range', textId, pageCount: text.pageCount };
+      if (field === 'lines') {
+        return { kind: 'ask_lines_per_page', textId, max: limits.pdf.maxLinesPerPage };
+      }
+      return {
+        kind: 'ask_max_lines',
+        textId,
+        max: limits.pdf.maxLinesPerUnit,
+        current: text.parseRequest?.maxLines ?? null,
+      };
     },
 
     /** Текст сообщения на шаге ввода; null — пользователь не на этом шаге. */
@@ -625,6 +635,15 @@ export function createTexts({
           };
         }
         return this.reparse(userId, text.id, 'manual_split', { linesPerPage: perPage });
+      }
+
+      if (dialog.data.field === 'maxlines') {
+        const maxLines = Number(input.trim());
+        if (!Number.isInteger(maxLines) || maxLines < 1 || maxLines > limits.pdf.maxLinesPerUnit) {
+          return { kind: 'invalid_max_lines', textId: text.id, max: limits.pdf.maxLinesPerUnit };
+        }
+        // Деление работает только у абзацев, поэтому стратегия задаётся явно.
+        return this.reparse(userId, text.id, 'paragraphs', { maxLines });
       }
 
       const range = parsePageRange(input, text.pageCount);
